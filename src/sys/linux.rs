@@ -36,7 +36,7 @@ pub unsafe fn reserve(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
     }
 }
 
-#[derive(PartialOrd, Ord, PartialEq, Eq)]
+#[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
 pub enum CommitStrategy {
     MprotectRw,
     MmapFixedProtRw,
@@ -72,7 +72,7 @@ pub unsafe fn commit(
     }
 }
 
-#[derive(PartialOrd, Ord, PartialEq, Eq)]
+#[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
 pub enum UncommitStrategy {
     MadviseFree,
     MadviseDontNeed,

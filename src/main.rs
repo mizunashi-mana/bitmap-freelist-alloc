@@ -1,9 +1,11 @@
 mod sys;
 
 fn main() {
-    let p = unsafe { sys::linux::reserve(16) }.unwrap();
-    unsafe { sys::linux::commit(&p, 16, sys::linux::CommitStrategy::MprotectRw) }.unwrap();
-    unsafe { sys::linux::uncommit(&p, 16, sys::linux::UncommitStrategy::MadviseFree) }.unwrap();
+    let mut env = sys::new_env();
+
+    let p = unsafe { env.reserve(16) }.unwrap();
+    unsafe { env.commit(&p, 16) }.unwrap();
+    unsafe { env.uncommit(&p, 16) }.unwrap();
 
     println!("Hello, world!");
 }
