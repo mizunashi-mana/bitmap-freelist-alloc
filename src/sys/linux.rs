@@ -4,21 +4,7 @@ use std::error::Error;
 use std::io;
 use std::result::Result;
 
-pub struct AnyMutPtr {
-    raw: *mut (),
-}
-
-impl AnyMutPtr {
-    pub fn new<T>(raw: *mut T) -> AnyMutPtr {
-        AnyMutPtr {
-            raw: raw as *mut (),
-        }
-    }
-
-    pub fn to_raw<T>(&self) -> *mut T {
-        self.raw as *mut T
-    }
-}
+use crate::sys::AnyMutPtr;
 
 pub unsafe fn reserve(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
     let p = libc::mmap(
@@ -73,30 +59,68 @@ pub unsafe fn commit(
 }
 
 #[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
-pub enum UncommitStrategy {
+pub enum SoftDecommitStrategy {
     MadviseFree,
     MadviseDontNeed,
-    MmapFixedProtNone,
+    MmapFixedRemap,
 }
 
-pub unsafe fn uncommit(
+pub unsafe fn soft_decommit(
     addr: &AnyMutPtr,
     len: usize,
-    prefer_strategy: UncommitStrategy,
-) -> Result<UncommitStrategy, Box<dyn Error>> {
-    if prefer_strategy <= UncommitStrategy::MadviseFree {
+    prefer_strategy: SoftDecommitStrategy,
+) -> Result<SoftDecommitStrategy, Box<dyn Error>> {
+    if prefer_strategy <= SoftDecommitStrategy::MadviseFree {
         // MADV_FREE was added in Linux 4.5.
         let r = libc::madvise(addr.to_raw(), len, libc::MADV_FREE);
         if r == 0 {
-            return Ok(UncommitStrategy::MadviseFree);
+            return Ok(SoftDecommitStrategy::MadviseFree);
         }
     }
 
-    if prefer_strategy <= UncommitStrategy::MadviseDontNeed {
+    if prefer_strategy <= SoftDecommitStrategy::MadviseDontNeed {
         // Since Linux 3.18, support for madvise is optional.
         let r = libc::madvise(addr.to_raw(), len, libc::MADV_DONTNEED);
         if r == 0 {
-            return Ok(UncommitStrategy::MadviseDontNeed);
+            return Ok(SoftDecommitStrategy::MadviseDontNeed);
+        }
+    }
+
+    // Remapping FIXED region is an unrecommended strategy.
+    // Use as a fallback if we cannot use madvise.
+    // Remapping unmaps old mappings.
+    let p = libc::mmap(
+        addr.to_raw(),
+        len,
+        libc::PROT_READ | libc::PROT_WRITE,
+        libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
+        -1,
+        0,
+    );
+    if p == libc::MAP_FAILED {
+        Err(Box::new(io::Error::last_os_error()))
+    } else {
+        Ok(SoftDecommitStrategy::MmapFixedRemap)
+    }
+}
+
+
+#[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
+pub enum HardDecommitStrategy {
+    MprotectNone,
+    MmapFixedProtNone,
+}
+
+pub unsafe fn hard_decommit(
+    addr: &AnyMutPtr,
+    len: usize,
+    prefer_strategy: HardDecommitStrategy,
+) -> Result<HardDecommitStrategy, Box<dyn Error>> {
+    if prefer_strategy <= HardDecommitStrategy::MprotectNone {
+        // mprotect was added in Linux 4.9.
+        let r = libc::mprotect(addr.to_raw(), len, libc::PROT_NONE);
+        if r == 0 {
+            return Ok(HardDecommitStrategy::MprotectNone);
         }
     }
 
@@ -113,6 +137,34 @@ pub unsafe fn uncommit(
     if p == libc::MAP_FAILED {
         Err(Box::new(io::Error::last_os_error()))
     } else {
-        Ok(UncommitStrategy::MmapFixedProtNone)
+        Ok(HardDecommitStrategy::MmapFixedProtNone)
+    }
+}
+
+pub unsafe fn map(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
+    let p = libc::mmap(
+        std::ptr::null_mut(),
+        len,
+        libc::PROT_READ | libc::PROT_WRITE,
+        libc::MAP_ANONYMOUS | libc::MAP_PRIVATE,
+        -1,
+        0,
+    );
+    if p == libc::MAP_FAILED {
+        Err(Box::new(io::Error::last_os_error()))
+    } else {
+        Ok(AnyMutPtr::new(p))
+    }
+}
+
+pub unsafe fn unmap(addr: &AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>> {
+    let p = libc::munmap(
+        addr.to_raw(),
+        len,
+    );
+    if p != 0 {
+        Err(Box::new(io::Error::last_os_error()))
+    } else {
+        Ok(())
     }
 }
