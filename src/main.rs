@@ -3,6 +3,17 @@ use std::result::Result;
 use std::io::Write;
 
 mod sys;
+use crate::sys::SysMemEnv;
+
+mod internal;
+use internal::arena;
+
+const SEGMENT_SIZE: usize = 1 << 17;
+const ARENA_CONFIG: arena::Config = arena::Config {
+    segment_size: SEGMENT_SIZE,
+    min_heap_size: SEGMENT_SIZE * 16,
+    max_heap_size: 1 << 26,
+};
 
 fn main() {
     main_try().unwrap();
@@ -13,6 +24,7 @@ fn main_try() -> Result<(), Box<dyn Error>> {
     let mut buffer = String::new();
     let stdin = std::io::stdin();
 
+    let _ = unsafe { arena::Arena::init(&mut env, ARENA_CONFIG) }?;
     let size = 1024 * 1024 * 1024;
 
     let p = unsafe { env.reserve(size) }?;
@@ -26,7 +38,7 @@ fn main_try() -> Result<(), Box<dyn Error>> {
     stdin.read_line(&mut buffer)?;
 
     {
-        let i = p.to_raw::<[i64; 1024]>();
+        let i = p.to_raw::<[i32; 1024]>();
         unsafe { *i = [1; 1024] };
         print!("Write and read {}: ", unsafe { (*i)[0] });
         std::io::stdout().flush()?;

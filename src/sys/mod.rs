@@ -2,9 +2,9 @@ use std::error::Error;
 use std::result::Result;
 
 mod linux;
-mod ptr;
+pub mod ptr;
 
-pub use ptr::AnyMutPtr;
+use ptr::AnyMutPtr;
 
 pub trait SysMemEnv {
     unsafe fn reserve(
@@ -37,15 +37,17 @@ pub trait SysMemEnv {
     ) -> Result<(), Box<dyn Error>>;
 }
 
-pub fn new_env() -> Box<dyn SysMemEnv> {
-    Box::new(SysMemEnvForLinux {
+pub type SysMemEnvImpl = SysMemEnvForLinux;
+
+pub fn new_env() -> SysMemEnvImpl {
+    SysMemEnvForLinux {
         prefer_commit_strategy: linux::CommitStrategy::MprotectRw,
         prefer_soft_decommit_strategy: linux::SoftDecommitStrategy::MadviseFree,
         prefer_hard_decommit_strategy: linux::HardDecommitStrategy::MprotectNone,
-    })
+    }
 }
 
-struct SysMemEnvForLinux {
+pub struct SysMemEnvForLinux {
     prefer_commit_strategy: linux::CommitStrategy,
     prefer_soft_decommit_strategy: linux::SoftDecommitStrategy,
     prefer_hard_decommit_strategy: linux::HardDecommitStrategy,

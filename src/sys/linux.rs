@@ -4,7 +4,7 @@ use std::error::Error;
 use std::io;
 use std::result::Result;
 
-use crate::sys::AnyMutPtr;
+use crate::sys::ptr::AnyMutPtr;
 
 pub unsafe fn reserve(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
     let p = libc::mmap(
@@ -35,7 +35,11 @@ pub unsafe fn commit(
 ) -> Result<CommitStrategy, Box<dyn Error>> {
     if prefer_strategy <= CommitStrategy::MprotectRw {
         // mprotect was added in Linux 4.9.
-        let r = libc::mprotect(addr.to_raw(), len, libc::PROT_READ | libc::PROT_WRITE);
+        let r = libc::mprotect(
+            addr.to_raw(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+        );
         if r == 0 {
             return Ok(CommitStrategy::MprotectRw);
         }
@@ -118,7 +122,11 @@ pub unsafe fn hard_decommit(
 ) -> Result<HardDecommitStrategy, Box<dyn Error>> {
     if prefer_strategy <= HardDecommitStrategy::MprotectNone {
         // mprotect was added in Linux 4.9.
-        let r = libc::mprotect(addr.to_raw(), len, libc::PROT_NONE);
+        let r = libc::mprotect(
+            addr.to_raw(),
+            len,
+            libc::PROT_NONE,
+        );
         if r == 0 {
             return Ok(HardDecommitStrategy::MprotectNone);
         }
@@ -157,7 +165,10 @@ pub unsafe fn map(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
     }
 }
 
-pub unsafe fn unmap(addr: &AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>> {
+pub unsafe fn unmap(
+    addr: &AnyMutPtr,
+    len: usize,
+) -> Result<(), Box<dyn Error>> {
     let p = libc::munmap(
         addr.to_raw(),
         len,
