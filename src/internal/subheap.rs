@@ -1,7 +1,7 @@
 use crate::internal::segment;
 
 pub struct SubHeap {
-    free_segment: *mut segment::Segment,
+    free_segment: *mut segment::Header,
 }
 
 impl SubHeap {

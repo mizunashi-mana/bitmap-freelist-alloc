@@ -7,7 +7,14 @@ pub mod ptr;
 use ptr::AnyMutPtr;
 
 pub trait SysMemEnv {
+    unsafe fn get_pagesize(
+        &mut self,
+    ) -> Result<usize, Box<dyn Error>>;
     unsafe fn reserve(
+        &mut self,
+        len: usize,
+    ) -> Result<AnyMutPtr, Box<dyn Error>>;
+    unsafe fn alloc(
         &mut self,
         len: usize,
     ) -> Result<AnyMutPtr, Box<dyn Error>>;
@@ -26,11 +33,7 @@ pub trait SysMemEnv {
         addr: &AnyMutPtr,
         len: usize,
     ) -> Result<(), Box<dyn Error>>;
-    unsafe fn map(
-        &mut self,
-        len: usize,
-    ) -> Result<AnyMutPtr, Box<dyn Error>>;
-    unsafe fn unmap(
+    unsafe fn release(
         &mut self,
         addr: &AnyMutPtr,
         len: usize,
@@ -54,6 +57,12 @@ pub struct SysMemEnvForLinux {
 }
 
 impl SysMemEnv for SysMemEnvForLinux {
+    unsafe fn get_pagesize(
+        &mut self,
+    ) -> Result<usize, Box<dyn Error>> {
+        linux::get_pagesize()
+    }
+
     unsafe fn reserve(
         &mut self,
         len: usize,
@@ -100,18 +109,18 @@ impl SysMemEnv for SysMemEnvForLinux {
         Ok(())
     }
 
-    unsafe fn map(
+    unsafe fn alloc(
         &mut self,
         len: usize,
     ) -> Result<AnyMutPtr, Box<dyn Error>> {
-        linux::map(len)
+        linux::alloc(len)
     }
 
-    unsafe fn unmap(
+    unsafe fn release(
         &mut self,
         addr: &AnyMutPtr,
         len: usize,
     ) -> Result<(), Box<dyn Error>> {
-        linux::unmap(addr, len)
+        linux::release(addr, len)
     }
 }

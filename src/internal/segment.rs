@@ -1,1 +1,3 @@
-pub type Segment = ();
+pub struct Header {
+    next: *mut Header,
+}

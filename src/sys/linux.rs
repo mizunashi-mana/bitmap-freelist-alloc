@@ -6,6 +6,15 @@ use std::result::Result;
 
 use crate::sys::ptr::AnyMutPtr;
 
+pub unsafe fn get_pagesize() -> Result<usize, Box<dyn Error>> {
+    let v = libc::sysconf(libc::_SC_PAGE_SIZE);
+    if v < 0 {
+        Err(Box::new(io::Error::last_os_error()))
+    } else {
+        Ok(v as usize)
+    }
+}
+
 pub unsafe fn reserve(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
     let p = libc::mmap(
         std::ptr::null_mut(),
@@ -149,7 +158,7 @@ pub unsafe fn hard_decommit(
     }
 }
 
-pub unsafe fn map(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
+pub unsafe fn alloc(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
     let p = libc::mmap(
         std::ptr::null_mut(),
         len,
@@ -165,7 +174,7 @@ pub unsafe fn map(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
     }
 }
 
-pub unsafe fn unmap(
+pub unsafe fn release(
     addr: &AnyMutPtr,
     len: usize,
 ) -> Result<(), Box<dyn Error>> {

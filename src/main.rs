@@ -8,6 +8,8 @@ use crate::sys::SysMemEnv;
 mod internal;
 use internal::arena;
 
+mod util;
+
 const SEGMENT_SIZE: usize = 1 << 17;
 const ARENA_CONFIG: arena::Config = arena::Config {
     segment_size: SEGMENT_SIZE,
