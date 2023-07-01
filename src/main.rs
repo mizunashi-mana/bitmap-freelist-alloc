@@ -23,7 +23,17 @@ unsafe fn main_try() -> Result<(), Box<dyn Error>> {
     let mut env = sys::new_env();
 
     let arena = arena::Arena::init(&mut env, ARENA_CONFIG)?;
-    let _ = arena.alloc_block_free_size(&mut env, 1 << 18)?;
+    let Some(ptr) = arena.alloc_block_free_size(&mut env, 1 << 18)? else { panic!("unexpected.") };
+
+    let item: *mut usize = ptr.to_raw();
+    *item = 0;
+    println!("{:?}", *item);
+
+    *item = ptr.to_raw_addr();
+    println!("{:?}", *item);
+
+    *item = 10;
+    println!("{:?}", *item);
 
     Ok(())
 }
