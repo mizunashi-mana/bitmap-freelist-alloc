@@ -5,6 +5,7 @@ use crate::internal::layout::arena;
 use crate::sys::ptr::AnyMutPtr;
 use crate::sys::SysMemEnv;
 
+#[derive(Debug)]
 pub struct SampleAlloc {
     arena: arena::Arena,
 }

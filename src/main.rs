@@ -12,7 +12,7 @@ const SEGMENT_SIZE: usize = 1 << 17;
 const ALLOC_CONFIG: allocator::Config = allocator::Config {
     segment_size: SEGMENT_SIZE,
     min_heap_size: SEGMENT_SIZE * 16,
-    max_heap_size: 1 << 26,
+    max_heap_size: 500 << 20,
 };
 
 fn main() {
@@ -24,6 +24,7 @@ unsafe fn main_try() -> Result<(), Box<dyn Error>> {
         sys::new_env(),
         ALLOC_CONFIG,
     )?;
+    println!("manager info: {:?}", manager);
     let ptr = manager.alloc(1 << 18)?;
 
     let item: *mut usize = ptr.to_raw();

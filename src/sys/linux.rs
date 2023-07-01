@@ -31,7 +31,7 @@ pub unsafe fn reserve(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
     }
 }
 
-#[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
+#[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum CommitStrategy {
     MprotectRw,
     MmapFixedProtRw,
@@ -67,7 +67,27 @@ pub unsafe fn commit(
     }
 }
 
-#[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
+pub unsafe fn force_commit(
+    addr: AnyMutPtr,
+    len: usize,
+) -> Result<(), Box<dyn Error>> {
+    // Remapping FIXED region is an unrecommended strategy.
+    let p = libc::mmap(
+        addr.to_raw(),
+        len,
+        libc::PROT_READ | libc::PROT_WRITE,
+        libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
+        -1,
+        0,
+    );
+    if p == libc::MAP_FAILED {
+        Err(Box::new(io::Error::last_os_error()))
+    } else {
+        Ok(())
+    }
+}
+
+#[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum SoftDecommitStrategy {
     MadviseFree,
     MadviseDontNeed,
@@ -113,7 +133,7 @@ pub unsafe fn soft_decommit(
     }
 }
 
-#[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
+#[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum HardDecommitStrategy {
     MprotectNone,
     MmapFixedProtNone,

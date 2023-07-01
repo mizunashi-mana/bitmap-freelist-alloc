@@ -23,6 +23,7 @@ pub unsafe fn init<Env: SysMemEnv>(
     SampleAllocWithEnv::<Env>::init(env, config)
 }
 
+#[derive(Debug)]
 pub struct SampleAllocWithEnv<Env> {
     env: Env,
     internal: internal::allocator::SampleAlloc,

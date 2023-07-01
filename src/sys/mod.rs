@@ -11,6 +11,7 @@ pub trait SysMemEnv {
     unsafe fn reserve(&mut self, len: usize) -> Result<AnyMutPtr, Box<dyn Error>>;
     unsafe fn alloc(&mut self, len: usize) -> Result<AnyMutPtr, Box<dyn Error>>;
     unsafe fn commit(&mut self, addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>>;
+    unsafe fn force_commit(&mut self, addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>>;
     unsafe fn soft_decommit(&mut self, addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>>;
     unsafe fn hard_decommit(&mut self, addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>>;
     unsafe fn release(&mut self, addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>>;
@@ -26,6 +27,7 @@ pub fn new_env() -> SysMemEnvImpl {
     }
 }
 
+#[derive(Debug)]
 pub struct SysMemEnvForLinux {
     prefer_commit_strategy: linux::CommitStrategy,
     prefer_soft_decommit_strategy: linux::SoftDecommitStrategy,
@@ -44,6 +46,10 @@ impl SysMemEnv for SysMemEnvForLinux {
     unsafe fn commit(&mut self, addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>> {
         self.prefer_commit_strategy = linux::commit(addr, len, self.prefer_commit_strategy)?;
         Ok(())
+    }
+
+    unsafe fn force_commit(&mut self, addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>> {
+        linux::force_commit(addr, len)
     }
 
     unsafe fn soft_decommit(&mut self, addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>> {
