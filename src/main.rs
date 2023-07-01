@@ -1,10 +1,10 @@
 use std::error::Error;
 use std::result::Result;
 
-mod sys;
-mod internal;
-mod util;
 mod allocator;
+mod internal;
+mod sys;
+mod util;
 
 use crate::allocator::Allocator;
 
@@ -20,10 +20,7 @@ fn main() {
 }
 
 unsafe fn main_try() -> Result<(), Box<dyn Error>> {
-    let mut manager = allocator::init(
-        sys::new_env(),
-        ALLOC_CONFIG,
-    )?;
+    let mut manager = allocator::init(sys::new_env(), ALLOC_CONFIG)?;
     println!("manager info: {:?}", manager);
     let ptr = manager.alloc(1 << 18)?;
 

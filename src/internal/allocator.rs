@@ -15,18 +15,16 @@ impl SampleAlloc {
         env: &mut Env,
         arena_config: arena::Config,
     ) -> Result<Self, Box<dyn Error>> {
-        let arena = arena::Arena::init(
-            env,
-            arena_config,
-        )?;
+        let arena = arena::Arena::init(env, arena_config)?;
 
-        Ok(Self {
-            arena,
-        })
+        Ok(Self { arena })
     }
 
     fn heap_overflow(&mut self) -> Box<dyn Error> {
-        Box::new(std::io::Error::new(std::io::ErrorKind::OutOfMemory, "Over the max heap size."))
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::OutOfMemory,
+            "Over the max heap size.",
+        ))
     }
 
     pub unsafe fn alloc_with_env<Env: SysMemEnv>(
@@ -38,12 +36,8 @@ impl SampleAlloc {
             todo!()
         } else {
             match self.arena.alloc_block_free_size(env, size)? {
-                Some(block_ptr) => {
-                    Ok(block_ptr)
-                }
-                None => {
-                    Err(self.heap_overflow())
-                }
+                Some(block_ptr) => Ok(block_ptr),
+                None => Err(self.heap_overflow()),
             }
         }
     }

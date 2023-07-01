@@ -30,7 +30,8 @@ pub struct SampleAllocWithEnv<Env> {
 }
 
 impl<Env> SampleAllocWithEnv<Env>
-    where Env: SysMemEnv
+where
+    Env: SysMemEnv,
 {
     unsafe fn init(mut env: Env, config: Config) -> Result<Self, Box<dyn Error>> {
         let internal = internal::allocator::SampleAlloc::init(
@@ -42,15 +43,13 @@ impl<Env> SampleAllocWithEnv<Env>
             },
         )?;
 
-        Ok(SampleAllocWithEnv {
-            env,
-            internal,
-        })
+        Ok(SampleAllocWithEnv { env, internal })
     }
 }
 
 impl<Env> Allocator for SampleAllocWithEnv<Env>
-    where Env: SysMemEnv
+where
+    Env: SysMemEnv,
 {
     unsafe fn alloc(&mut self, size: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
         self.internal.alloc_with_env(&mut self.env, size)

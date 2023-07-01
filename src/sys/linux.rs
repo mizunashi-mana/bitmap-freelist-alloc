@@ -67,10 +67,7 @@ pub unsafe fn commit(
     }
 }
 
-pub unsafe fn force_commit(
-    addr: AnyMutPtr,
-    len: usize,
-) -> Result<(), Box<dyn Error>> {
+pub unsafe fn force_commit(addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>> {
     // Remapping FIXED region is an unrecommended strategy.
     let p = libc::mmap(
         addr.to_raw(),
