@@ -38,7 +38,7 @@ pub enum CommitStrategy {
 }
 
 pub unsafe fn commit(
-    addr: &AnyMutPtr,
+    addr: AnyMutPtr,
     len: usize,
     prefer_strategy: CommitStrategy,
 ) -> Result<CommitStrategy, Box<dyn Error>> {
@@ -75,7 +75,7 @@ pub enum SoftDecommitStrategy {
 }
 
 pub unsafe fn soft_decommit(
-    addr: &AnyMutPtr,
+    addr: AnyMutPtr,
     len: usize,
     prefer_strategy: SoftDecommitStrategy,
 ) -> Result<SoftDecommitStrategy, Box<dyn Error>> {
@@ -120,7 +120,7 @@ pub enum HardDecommitStrategy {
 }
 
 pub unsafe fn hard_decommit(
-    addr: &AnyMutPtr,
+    addr: AnyMutPtr,
     len: usize,
     prefer_strategy: HardDecommitStrategy,
 ) -> Result<HardDecommitStrategy, Box<dyn Error>> {
@@ -165,7 +165,7 @@ pub unsafe fn alloc(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
     }
 }
 
-pub unsafe fn release(addr: &AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>> {
+pub unsafe fn release(addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>> {
     let p = libc::munmap(addr.to_raw(), len);
     if p != 0 {
         Err(Box::new(io::Error::last_os_error()))

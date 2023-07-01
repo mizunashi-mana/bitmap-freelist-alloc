@@ -1,3 +1,4 @@
+#[derive(Debug, Clone, Copy)]
 pub struct AnyMutPtr {
     raw: *mut u8,
 }
@@ -25,5 +26,17 @@ impl AnyMutPtr {
         AnyMutPtr {
             raw: self.raw.add(size_bytes),
         }
+    }
+
+    #[inline]
+    pub unsafe fn sub(&self, size_bytes: usize) -> AnyMutPtr {
+        AnyMutPtr {
+            raw: self.raw.sub(size_bytes),
+        }
+    }
+
+    #[inline]
+    pub unsafe fn offset_bytes_from(&self, another: AnyMutPtr) -> isize {
+        self.raw.offset_from(another.raw)
     }
 }

@@ -1,4 +1,4 @@
-use crate::internal::segment;
+use crate::internal::layout::segment;
 
 pub struct SubHeap {
     free_segments_list: *mut segment::Header,

@@ -1,4 +1,4 @@
-use crate::internal::constants::ALIGNMENT_SIZE;
+use crate::internal::layout::constants::ALIGNMENT_SIZE;
 use crate::util;
 
 pub struct HeaderForFreeSize {

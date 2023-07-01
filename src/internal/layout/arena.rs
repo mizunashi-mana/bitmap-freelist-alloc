@@ -2,10 +2,10 @@ use std::error::Error;
 use std::mem::size_of;
 use std::result::Result;
 
-use crate::internal::block;
-use crate::internal::constants::{ALIGNMENT_SIZE, BYTE_BIT_SIZE};
-use crate::internal::segment;
-use crate::internal::subheap::SubHeap;
+use crate::internal::layout::block;
+use crate::internal::layout::constants::{ALIGNMENT_SIZE, BYTE_BIT_SIZE};
+use crate::internal::layout::segment;
+use crate::internal::layout::subheap::SubHeap;
 use crate::sys::ptr::AnyMutPtr;
 use crate::sys::SysMemEnv;
 use crate::util;
@@ -52,7 +52,7 @@ impl Arena {
     pub unsafe fn init<Env: SysMemEnv>(
         env: &mut Env,
         config: Config,
-    ) -> Result<Arena, Box<dyn Error>> {
+    ) -> Result<Self, Box<dyn Error>> {
         init_arena(env, config)
     }
 
@@ -80,6 +80,17 @@ impl Arena {
         }
     }
 
+    pub unsafe fn max_fixed_block_size(&self) -> usize {
+        ALIGNMENT_SIZE << self.header().subheap_count
+    }
+
+    pub unsafe fn is_fixed_size_block(&self, p: AnyMutPtr) -> bool {
+        let header = self.header();
+
+        p.offset_bytes_from(header.segment_space_begin) >= 0
+            && header.segment_space_end.offset_bytes_from(p) > 0
+    }
+
     pub unsafe fn alloc_segment<Env: SysMemEnv>(
         &self,
         env: &mut Env,
@@ -93,6 +104,14 @@ impl Arena {
         block_size: usize,
     ) -> Result<Option<AnyMutPtr>, Box<dyn Error>> {
         alloc_block_free_size_with_header(self.header(), env, block_size)
+    }
+
+    pub unsafe fn free_block_free_size<Env: SysMemEnv>(
+        &self,
+        env: &mut Env,
+        p: AnyMutPtr,
+    ) -> Result<(), Box<dyn Error>> {
+        free_block_free_size_with_header(self.header(), env, p)
     }
 }
 
@@ -132,7 +151,7 @@ unsafe fn init_arena<Env: SysMemEnv>(
         util::bits::min_aligned_size(header_subheap_space_size + bitmap_space_size, page_size);
     let context_space = env.reserve(context_space_size)?;
 
-    env.commit(&context_space, committed_context_space_size)?;
+    env.commit(context_space, committed_context_space_size)?;
     let committed_bitmap_item_count =
         (committed_context_space_size - header_subheap_space_size) / BITMAP_ITEM_SIZE;
 
@@ -181,6 +200,7 @@ unsafe fn init_arena<Env: SysMemEnv>(
         let allocated = alloc_segment_with_header(header, env)?;
         assert!(allocated);
     }
+    header.min_segment_count = header.committed_segment_count;
 
     Ok(arena)
 }
@@ -203,7 +223,7 @@ unsafe fn alloc_segment_with_header<Env: SysMemEnv>(
     let new_segment_space_begin = header
         .segment_space_begin
         .add(header.committed_segment_count * header.segment_size);
-    env.commit(&new_segment_space_begin, header.segment_size)?;
+    env.commit(new_segment_space_begin, header.segment_size)?;
     header.available_size -= header.segment_size;
 
     let new_segment_header: *mut segment::Header = new_segment_space_begin.to_raw();
@@ -229,7 +249,7 @@ unsafe fn alloc_bitmap_items_with_header<Env: SysMemEnv>(
         .bitmap_space_begin
         .add(header.committed_bitmap_item_count * BITMAP_ITEM_SIZE);
     let new_bitmap_item_count = header.page_size / BITMAP_ITEM_SIZE;
-    env.commit(&new_bitmap_space_begin, header.page_size)?;
+    env.commit(new_bitmap_space_begin, header.page_size)?;
     header.available_size -= header.page_size;
 
     std::ptr::write_bytes(new_bitmap_space_begin.to_raw::<u8>(), 0, header.page_size);
@@ -252,9 +272,26 @@ unsafe fn alloc_block_free_size_with_header<Env: SysMemEnv>(
     }
 
     let block_ptr = env.alloc(allocate_size)?;
+    header.available_size -= allocate_size;
     block::HeaderForFreeSize::init(block_ptr.to_raw(), block_size);
 
     Ok(Some(block_ptr.add(BLOCK_FREE_SIZE_HEADER_SIZE)))
+}
+
+unsafe fn free_block_free_size_with_header<Env: SysMemEnv>(
+    header: &mut Header,
+    env: &mut Env,
+    p: AnyMutPtr,
+) -> Result<(), Box<dyn Error>> {
+    let block_ptr = p.sub(BLOCK_FREE_SIZE_HEADER_SIZE);
+    let block_header: *mut block::HeaderForFreeSize = block_ptr.to_raw();
+    let block_size = (*block_header).block_size();
+    let block_whole_size = BLOCK_FREE_SIZE_HEADER_SIZE + block_size;
+
+    env.release(block_ptr, block_whole_size)?;
+    header.available_size += block_whole_size;
+
+    Ok(())
 }
 
 const MAX_SUBHEAP_COUNT: usize = 10;
@@ -284,13 +321,13 @@ unsafe fn reserve_aligned_space<Env: SysMemEnv>(
     let post_adjust_size = attempt_ptr_raw_addr % alignment_size;
 
     if util::bits::is_aligned(attempt_ptr_raw_addr, alignment_size) {
-        env.release(&attempt_ptr.add(space_size), alignment_size)?;
+        env.release(attempt_ptr.add(space_size), alignment_size)?;
         Ok(attempt_ptr)
     } else {
         let pre_adjust_size = alignment_size - post_adjust_size;
         let ptr = attempt_ptr.add(pre_adjust_size);
-        env.release(&attempt_ptr, pre_adjust_size)?;
-        env.release(&ptr.add(space_size), post_adjust_size)?;
+        env.release(attempt_ptr, pre_adjust_size)?;
+        env.release(ptr.add(space_size), post_adjust_size)?;
         Ok(ptr)
     }
 }
