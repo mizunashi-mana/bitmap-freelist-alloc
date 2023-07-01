@@ -1,12 +1,14 @@
 use std::error::Error;
-use std::result::Result;
 use std::mem::size_of;
+use std::result::Result;
 
-use crate::sys::SysMemEnv;
-use crate::internal::subheap::SubHeap;
+use crate::internal::block;
+use crate::internal::constants::{ALIGNMENT_SIZE, BYTE_BIT_SIZE};
 use crate::internal::segment;
-use crate::util;
+use crate::internal::subheap::SubHeap;
 use crate::sys::ptr::AnyMutPtr;
+use crate::sys::SysMemEnv;
+use crate::util;
 
 pub struct Config {
     pub segment_size: usize,
@@ -18,16 +20,22 @@ pub struct Arena {
     context_space: AnyMutPtr,
 }
 
-const ALIGNMENT_SIZE: usize = size_of::<usize>();
-
-struct Header {
-    available_size: usize,
+pub struct Header {
+    // immutable
+    page_size: usize,
+    segment_size: usize,
     subheap_count: usize,
-    min_segment_count: usize,
-    committed_segment_count: usize,
-    committed_bitmap_item_count: usize,
+    bitmap_space_begin: AnyMutPtr,
     segment_space_begin: AnyMutPtr,
     segment_space_end: AnyMutPtr,
+
+    // late init
+    min_segment_count: usize,
+
+    // mutable
+    available_size: usize,
+    committed_segment_count: usize,
+    committed_bitmap_item_count: usize,
     free_segments_list: *mut segment::Header,
 }
 
@@ -37,103 +45,216 @@ const ARENA_SUBHEAPS_OFFSET: usize = ARENA_HEADER_SIZE;
 
 type BitMapItem = usize;
 
-const BYTE_BIT_SIZE: usize = 8;
 const BITMAP_ITEM_SIZE: usize = size_of::<BitMapItem>();
 const BITMAP_ITEM_BIT_SIZE: usize = BITMAP_ITEM_SIZE * BYTE_BIT_SIZE;
 
 impl Arena {
-    pub unsafe fn init<Env: SysMemEnv>(env: &mut Env, config: Config) -> Result<Arena, Box<dyn Error>> {
-        let page_size = env.get_pagesize()?;
+    pub unsafe fn init<Env: SysMemEnv>(
+        env: &mut Env,
+        config: Config,
+    ) -> Result<Arena, Box<dyn Error>> {
+        init_arena(env, config)
+    }
 
-        assert!(ALIGNMENT_SIZE >= 8);
-        assert!(config.segment_size >= ALIGNMENT_SIZE * 4);
-        assert!(util::bits::is_aligned(config.segment_size, ALIGNMENT_SIZE));
-        assert!(util::bits::is_aligned(config.segment_size, page_size));
-        assert!(util::bits::is_power_of_2(config.segment_size));
-        assert!(util::bits::is_aligned(page_size, BITMAP_ITEM_SIZE));
-        assert!(config.min_heap_size < config.max_heap_size);
-
-        let subheap_count = calc_subheap_count(config.segment_size);
-        let subheap_space_size = ARENA_SUBHEAP_ITEM_SIZE * subheap_count;
-
-        let header_subheap_space_size = util::bits::min_aligned_size(
-            ARENA_HEADER_SIZE + subheap_space_size,
-            BITMAP_ITEM_SIZE,
-        );
-        let committed_context_space_size = util::bits::min_aligned_size(
-            header_subheap_space_size,
-            page_size,
-        );
-        assert!(config.max_heap_size > committed_context_space_size);
-
-        let init_available_size = config.max_heap_size - committed_context_space_size;
-        let reserved_size_for_segments = util::bits::max_aligned_size(
-            init_available_size,
-            config.segment_size,
-        );
-        let max_segment_count = reserved_size_for_segments / config.segment_size;
-
-        let bitmap_space_size = max_segment_count * BITMAP_ITEM_SIZE;
-
-        let context_space_size = util::bits::min_aligned_size(
-            header_subheap_space_size + bitmap_space_size,
-            page_size,
-        );
-        let context_space = env.reserve(context_space_size)?;
-
-        env.commit(&context_space, committed_context_space_size)?;
-        let committed_bitmap_item_count
-            = (committed_context_space_size - header_subheap_space_size)
-            / BITMAP_ITEM_SIZE
-            ;
-
-        let segment_space_size = max_segment_count * config.segment_size;
-        let segment_space = reserve_aligned_space(
-            env,
-            segment_space_size,
-            config.segment_size,
-        )?;
-
-        let arena = Arena {
-            context_space,
-        };
-
-        let segment_space_begin = segment_space;
-        let segment_space_end = segment_space_begin.add(segment_space_size);
-        *arena.header() = Header {
-            available_size: init_available_size,
-            subheap_count: subheap_count,
-            // not fixed yet
-            min_segment_count: 0,
-            committed_segment_count: 0,
-            committed_bitmap_item_count: committed_bitmap_item_count,
-            segment_space_begin,
-            segment_space_end,
-            free_segments_list: std::ptr::null_mut(),
-        };
-
-        for i in 0..subheap_count {
-            SubHeap::init(arena.subheap_item(i));
+    pub unsafe fn header(&self) -> &mut Header {
+        match self.context_space.to_raw::<Header>().as_mut() {
+            Some(header) => header,
+            None => {
+                panic!("unreachable: The header pointer of arena is not null after initialized.")
+            }
         }
-
-        Ok(arena)
     }
 
-    pub unsafe fn header(&self) -> *mut Header {
-        self.context_space.to_raw()
+    pub unsafe fn subheap_item(&self, index: usize) -> &mut SubHeap {
+        let subheap_item_offset = ARENA_SUBHEAPS_OFFSET + ARENA_SUBHEAP_ITEM_SIZE * index;
+        match self
+            .context_space
+            .add(subheap_item_offset)
+            .to_raw::<SubHeap>()
+            .as_mut()
+        {
+            Some(subheap) => subheap,
+            None => {
+                panic!("unreachable: The sub-heap pointer of arena is not null after initialized.")
+            }
+        }
     }
 
-    pub unsafe fn subheap_item(&self, index: usize) -> *mut SubHeap {
-        self.context_space.add(ARENA_SUBHEAPS_OFFSET + ARENA_SUBHEAP_ITEM_SIZE * index).to_raw()
+    pub unsafe fn alloc_segment<Env: SysMemEnv>(
+        &self,
+        env: &mut Env,
+    ) -> Result<bool, Box<dyn Error>> {
+        alloc_segment_with_header(self.header(), env)
     }
 
-    pub unsafe fn alloc_segment(&mut self) -> Result<*mut segment::Header, Box<dyn Error>> {
-        Ok(std::ptr::null_mut())
+    pub unsafe fn alloc_block_free_size<Env: SysMemEnv>(
+        &self,
+        env: &mut Env,
+        block_size: usize,
+    ) -> Result<Option<AnyMutPtr>, Box<dyn Error>> {
+        alloc_block_free_size_with_header(self.header(), env, block_size)
+    }
+}
+
+unsafe fn init_arena<Env: SysMemEnv>(
+    env: &mut Env,
+    config: Config,
+) -> Result<Arena, Box<dyn Error>> {
+    let page_size = env.get_pagesize()?;
+    let segment_size = config.segment_size;
+
+    assert!(ALIGNMENT_SIZE >= 8);
+    assert!(segment_size >= ALIGNMENT_SIZE * 4);
+    assert!(util::bits::is_aligned(segment_size, ALIGNMENT_SIZE));
+    assert!(util::bits::is_aligned(segment_size, page_size));
+    assert!(util::bits::is_power_of_2(segment_size));
+    assert!(util::bits::is_aligned(page_size, BITMAP_ITEM_SIZE));
+    assert!(config.min_heap_size < config.max_heap_size);
+    assert!(config.max_heap_size - config.min_heap_size >= segment_size + page_size);
+
+    let subheap_count = calc_subheap_count(segment_size);
+    let subheap_space_size = ARENA_SUBHEAP_ITEM_SIZE * subheap_count;
+
+    let header_subheap_space_size =
+        util::bits::min_aligned_size(ARENA_HEADER_SIZE + subheap_space_size, BITMAP_ITEM_SIZE);
+    let committed_context_space_size =
+        util::bits::min_aligned_size(header_subheap_space_size, page_size);
+    assert!(config.max_heap_size > committed_context_space_size);
+
+    let init_available_size = config.max_heap_size - committed_context_space_size;
+    let reserved_size_for_segments =
+        util::bits::max_aligned_size(init_available_size, segment_size);
+    let max_segment_count = reserved_size_for_segments / segment_size;
+
+    let bitmap_space_size = max_segment_count * BITMAP_ITEM_SIZE;
+
+    let context_space_size =
+        util::bits::min_aligned_size(header_subheap_space_size + bitmap_space_size, page_size);
+    let context_space = env.reserve(context_space_size)?;
+
+    env.commit(&context_space, committed_context_space_size)?;
+    let committed_bitmap_item_count =
+        (committed_context_space_size - header_subheap_space_size) / BITMAP_ITEM_SIZE;
+
+    let segment_space_size = max_segment_count * segment_size;
+    let segment_space = reserve_aligned_space(env, segment_space_size, segment_size)?;
+
+    let bitmap_space_begin = context_space.add(header_subheap_space_size);
+    let segment_space_begin = segment_space;
+    let segment_space_end = segment_space_begin.add(segment_space_size);
+    *context_space.to_raw() = Header {
+        // immutable
+        page_size,
+        segment_size,
+        subheap_count,
+        bitmap_space_begin,
+        segment_space_begin,
+        segment_space_end,
+
+        // not fixed yet
+        min_segment_count: 0,
+
+        // mutable
+        available_size: init_available_size,
+        committed_segment_count: 0,
+        committed_bitmap_item_count,
+        free_segments_list: std::ptr::null_mut(),
+    };
+
+    for i in 0..subheap_count {
+        SubHeap::init(
+            context_space
+                .add(ARENA_SUBHEAPS_OFFSET + ARENA_SUBHEAP_ITEM_SIZE * i)
+                .to_raw(),
+        );
     }
 
-    pub unsafe fn free_segment(&mut self, p: *mut segment::Header) -> Result<(), Box<dyn Error>> {
-        Ok(())
+    let arena = Arena { context_space };
+    let header = arena.header();
+
+    while {
+        let allocated_size = header_subheap_space_size
+            + header.committed_bitmap_item_count * BITMAP_ITEM_SIZE
+            + header.committed_segment_count * segment_size;
+        allocated_size < config.min_heap_size
+    } {
+        let allocated = alloc_segment_with_header(header, env)?;
+        assert!(allocated);
     }
+
+    Ok(arena)
+}
+
+unsafe fn alloc_segment_with_header<Env: SysMemEnv>(
+    header: &mut Header,
+    env: &mut Env,
+) -> Result<bool, Box<dyn Error>> {
+    if header.committed_bitmap_item_count == header.committed_segment_count {
+        let bitmap_item_alloc_result = alloc_bitmap_items_with_header(header, env)?;
+        if !bitmap_item_alloc_result {
+            return Ok(false);
+        }
+    }
+
+    if header.available_size < header.segment_size {
+        return Ok(false);
+    }
+
+    let new_segment_space_begin = header
+        .segment_space_begin
+        .add(header.committed_segment_count * header.segment_size);
+    env.commit(&new_segment_space_begin, header.segment_size)?;
+    header.available_size -= header.segment_size;
+
+    let new_segment_header: *mut segment::Header = new_segment_space_begin.to_raw();
+    *new_segment_header = segment::Header {
+        next: header.free_segments_list,
+    };
+
+    header.committed_segment_count += 1;
+    header.free_segments_list = new_segment_header;
+
+    Ok(true)
+}
+
+unsafe fn alloc_bitmap_items_with_header<Env: SysMemEnv>(
+    header: &mut Header,
+    env: &mut Env,
+) -> Result<bool, Box<dyn Error>> {
+    if header.available_size < header.page_size {
+        return Ok(false);
+    }
+
+    let new_bitmap_space_begin = header
+        .bitmap_space_begin
+        .add(header.committed_bitmap_item_count * BITMAP_ITEM_SIZE);
+    let new_bitmap_item_count = header.page_size / BITMAP_ITEM_SIZE;
+    env.commit(&new_bitmap_space_begin, header.page_size)?;
+    header.available_size -= header.page_size;
+
+    std::ptr::write_bytes(new_bitmap_space_begin.to_raw::<u8>(), 0, header.page_size);
+
+    header.committed_bitmap_item_count += new_bitmap_item_count;
+
+    Ok(true)
+}
+
+const BLOCK_FREE_SIZE_HEADER_SIZE: usize = size_of::<block::HeaderForFreeSize>();
+unsafe fn alloc_block_free_size_with_header<Env: SysMemEnv>(
+    header: &mut Header,
+    env: &mut Env,
+    block_size: usize,
+) -> Result<Option<AnyMutPtr>, Box<dyn Error>> {
+    let allocate_size = BLOCK_FREE_SIZE_HEADER_SIZE + block_size;
+
+    if header.available_size < allocate_size {
+        return Ok(None);
+    }
+
+    let block_ptr = env.alloc(allocate_size)?;
+    block::HeaderForFreeSize::init(block_ptr.to_raw(), block_size);
+
+    Ok(Some(block_ptr.add(BLOCK_FREE_SIZE_HEADER_SIZE)))
 }
 
 const MAX_SUBHEAP_COUNT: usize = 10;

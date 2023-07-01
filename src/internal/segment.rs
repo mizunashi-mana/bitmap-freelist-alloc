@@ -1,3 +1,3 @@
 pub struct Header {
-    next: *mut Header,
+    pub next: *mut Header,
 }

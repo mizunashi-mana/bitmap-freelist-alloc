@@ -44,11 +44,7 @@ pub unsafe fn commit(
 ) -> Result<CommitStrategy, Box<dyn Error>> {
     if prefer_strategy <= CommitStrategy::MprotectRw {
         // mprotect was added in Linux 4.9.
-        let r = libc::mprotect(
-            addr.to_raw(),
-            len,
-            libc::PROT_READ | libc::PROT_WRITE,
-        );
+        let r = libc::mprotect(addr.to_raw(), len, libc::PROT_READ | libc::PROT_WRITE);
         if r == 0 {
             return Ok(CommitStrategy::MprotectRw);
         }
@@ -117,7 +113,6 @@ pub unsafe fn soft_decommit(
     }
 }
 
-
 #[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
 pub enum HardDecommitStrategy {
     MprotectNone,
@@ -131,11 +126,7 @@ pub unsafe fn hard_decommit(
 ) -> Result<HardDecommitStrategy, Box<dyn Error>> {
     if prefer_strategy <= HardDecommitStrategy::MprotectNone {
         // mprotect was added in Linux 4.9.
-        let r = libc::mprotect(
-            addr.to_raw(),
-            len,
-            libc::PROT_NONE,
-        );
+        let r = libc::mprotect(addr.to_raw(), len, libc::PROT_NONE);
         if r == 0 {
             return Ok(HardDecommitStrategy::MprotectNone);
         }
@@ -174,14 +165,8 @@ pub unsafe fn alloc(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
     }
 }
 
-pub unsafe fn release(
-    addr: &AnyMutPtr,
-    len: usize,
-) -> Result<(), Box<dyn Error>> {
-    let p = libc::munmap(
-        addr.to_raw(),
-        len,
-    );
+pub unsafe fn release(addr: &AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>> {
+    let p = libc::munmap(addr.to_raw(), len);
     if p != 0 {
         Err(Box::new(io::Error::last_os_error()))
     } else {
