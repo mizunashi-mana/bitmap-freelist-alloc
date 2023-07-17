@@ -5,6 +5,7 @@ mod linux;
 pub mod ptr;
 
 use ptr::AnyMutPtr;
+use crate::util;
 
 pub trait SysMemEnv {
     unsafe fn get_pagesize(&mut self) -> Result<usize, Box<dyn Error>>;
@@ -15,6 +16,30 @@ pub trait SysMemEnv {
     unsafe fn soft_decommit(&mut self, addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>>;
     unsafe fn hard_decommit(&mut self, addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>>;
     unsafe fn release(&mut self, addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>>;
+
+    unsafe fn reserve_aligned_space(
+        &mut self,
+        space_size: usize,
+        alignment_size: usize,
+    ) -> Result<AnyMutPtr, Box<dyn Error>> {
+        assert!(util::bits::is_aligned(space_size, alignment_size));
+
+        let attempt_ptr = self.reserve(space_size + alignment_size)?;
+        let attempt_ptr_raw_addr = attempt_ptr.to_raw_addr();
+
+        let post_adjust_size = attempt_ptr_raw_addr % alignment_size;
+
+        if util::bits::is_aligned(attempt_ptr_raw_addr, alignment_size) {
+            self.release(attempt_ptr.add(space_size), alignment_size)?;
+            Ok(attempt_ptr)
+        } else {
+            let pre_adjust_size = alignment_size - post_adjust_size;
+            let ptr = attempt_ptr.add(pre_adjust_size);
+            self.release(attempt_ptr, pre_adjust_size)?;
+            self.release(ptr.add(space_size), post_adjust_size)?;
+            Ok(ptr)
+        }
+    }
 }
 
 pub type SysMemEnvImpl = SysMemEnvForLinux;

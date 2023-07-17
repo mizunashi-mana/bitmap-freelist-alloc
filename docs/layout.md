@@ -34,6 +34,8 @@ Segment Space:
 +----------------------------+
 ```
 
+## Sub-Heap
+
 ## Segment
 
 ```
@@ -56,6 +58,14 @@ Segment Space:
 
 ## Block
 
-### Fixed size block
+### Fixed size
 
-### Free size block
+### Free size
+
+```
++-------------------------+
+|         Header          |
++-------------------------+
+|       Using Space       |
++-------------------------+
+```

@@ -11,7 +11,6 @@ pub trait Allocator {
 }
 
 pub struct Config {
-    pub segment_size: usize,
     pub min_heap_size: usize,
     pub max_heap_size: usize,
 }
@@ -37,7 +36,6 @@ where
         let internal = internal::allocator::SampleAlloc::init(
             &mut env,
             internal::layout::arena::Config {
-                segment_size: config.segment_size,
                 min_heap_size: config.min_heap_size,
                 max_heap_size: config.max_heap_size,
             },

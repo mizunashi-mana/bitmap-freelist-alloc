@@ -8,10 +8,8 @@ mod util;
 
 use crate::allocator::Allocator;
 
-const SEGMENT_SIZE: usize = 1 << 17;
 const ALLOC_CONFIG: allocator::Config = allocator::Config {
-    segment_size: SEGMENT_SIZE,
-    min_heap_size: SEGMENT_SIZE * 16,
+    min_heap_size: 1 << 18,
     max_heap_size: 500 << 20,
 };
 

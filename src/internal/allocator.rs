@@ -2,6 +2,7 @@ use std::error::Error;
 use std::result::Result;
 
 use crate::internal::layout::arena;
+use crate::internal::layout::subheap;
 use crate::sys::ptr::AnyMutPtr;
 use crate::sys::SysMemEnv;
 
@@ -32,12 +33,15 @@ impl SampleAlloc {
         env: &mut Env,
         size: usize,
     ) -> Result<AnyMutPtr, Box<dyn Error>> {
-        if size <= self.arena.max_fixed_block_size() {
-            todo!()
-        } else {
-            match self.arena.alloc_block_free_size(env, size)? {
-                Some(block_ptr) => Ok(block_ptr),
-                None => Err(self.heap_overflow()),
+        match subheap::class_of_size(size) {
+            Some(_) => {
+                todo!()
+            },
+            None => {
+                match self.arena.alloc_block_free_size(env, size)? {
+                    Some(block_ptr) => Ok(block_ptr),
+                    None => Err(self.heap_overflow()),
+                }
             }
         }
     }
