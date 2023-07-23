@@ -14,6 +14,7 @@ use crate::util;
 pub struct Config {
     pub min_heap_size: usize,
     pub max_heap_size: usize,
+    pub keep_segments_count: usize,
 }
 
 pub struct Arena {
@@ -37,15 +38,18 @@ pub struct Header {
     segment_compact_header_space: AnyMutPtr,
     segment_space_begin: AnyMutPtr,
     segment_space_end: AnyMutPtr,
+    prefer_keep_segments_count: usize,
 
     // late init
     min_segment_count: usize,
 
     // mutable
     available_size: usize,
-    committed_segment_count: usize,
     committed_segment_compact_header_count: usize,
-    free_segments_list: *mut segment::CompactHeader,
+    keep_segments_begin: *mut segment::CompactHeader,
+    keep_segments_end: *mut segment::CompactHeader,
+    keep_segments_count: usize,
+    free_segments_begin: *mut segment::CompactHeader,
     subheaps: [subheap::SubHeap; subheap::CLASS_COUNT],
 }
 
@@ -75,11 +79,12 @@ impl Arena {
             && header.segment_space_end.offset_bytes_from(p) > 0
     }
 
-    pub unsafe fn alloc_segment<Env: SysMemEnv>(
+    pub unsafe fn alloc_block_on_subheap<Env: SysMemEnv>(
         &self,
         env: &mut Env,
+        subheap_index: usize,
     ) -> Result<bool, Box<dyn Error>> {
-        alloc_segment_by_header(self.header(), env)
+        todo!()
     }
 
     pub unsafe fn alloc_block_free_size<Env: SysMemEnv>(
@@ -90,12 +95,20 @@ impl Arena {
         alloc_block_free_size_by_header(self.header(), env, block_size)
     }
 
+    pub unsafe fn free_block_on_subheap<Env: SysMemEnv>(
+        &self,
+        env: &mut Env,
+        p: AnyMutPtr,
+    ) -> Result<bool, Box<dyn Error>> {
+        todo!()
+    }
+
     pub unsafe fn free_block_free_size<Env: SysMemEnv>(
         &self,
         env: &mut Env,
         p: AnyMutPtr,
     ) -> Result<(), Box<dyn Error>> {
-        free_block_free_size_with_header(self.header(), env, p)
+        free_block_free_size_by_header(self.header(), env, p)
     }
 }
 
@@ -107,6 +120,7 @@ unsafe fn init_arena<Env: SysMemEnv>(
 
     assert!(ALIGNMENT_SIZE >= 4);
     assert!(util::bits::is_aligned(segment::SEGMENT_SIZE, page_size));
+    assert!(util::bits::is_aligned(page_size, ALIGNMENT_SIZE));
     assert!(util::bits::is_aligned(page_size, segment::COMPACT_HEADER_SIZE));
     assert!(config.min_heap_size < config.max_heap_size);
     assert!(config.max_heap_size - config.min_heap_size >= segment::SEGMENT_SIZE + page_size);
@@ -148,6 +162,7 @@ unsafe fn init_arena<Env: SysMemEnv>(
         segment_compact_header_space,
         segment_space_begin,
         segment_space_end,
+        prefer_keep_segments_count: config.keep_segments_count,
 
         // not fixed yet
         min_segment_count: 0,
@@ -156,6 +171,9 @@ unsafe fn init_arena<Env: SysMemEnv>(
         available_size: init_available_size,
         committed_segment_count: 0,
         committed_segment_compact_header_count,
+        keep_segments_begin: std::ptr::null_mut(),
+        keep_segments_end: std::ptr::null_mut(),
+        keep_segments_count: 0,
         free_segments_list: std::ptr::null_mut(),
         subheaps: [subheap::SubHeap {
             free_segments_list: std::ptr::null_mut(),
@@ -176,12 +194,27 @@ unsafe fn init_arena<Env: SysMemEnv>(
             assert!(alloc_result);
         }
 
-        let allocated = alloc_segment_by_header(header, env)?;
+        let allocated = alloc_segment_as_free_segment_by_header(header, env)?;
         assert!(allocated);
     }
     header.min_segment_count = header.committed_segment_count;
 
     Ok(arena)
+}
+
+unsafe fn alloc_segment_as_free_segment_by_header<Env: SysMemEnv>(
+    header: &mut Header,
+    env: &mut Env,
+) -> Result<bool, Box<dyn Error>> {
+    todo!()
+}
+
+unsafe fn alloc_segment_as_new_subheap_segment_by_header<Env: SysMemEnv>(
+    header: &mut Header,
+    env: &mut Env,
+    subheap: &mut SubHeap,
+) -> Result<bool, Box<dyn Error>> {
+    todo!()
 }
 
 unsafe fn alloc_segment_by_header<Env: SysMemEnv>(
@@ -283,7 +316,7 @@ unsafe fn alloc_block_free_size_by_header<Env: SysMemEnv>(
     env: &mut Env,
     block_size: usize,
 ) -> Result<Option<AnyMutPtr>, Box<dyn Error>> {
-    let allocate_size = BLOCK_FREE_SIZE_HEADER_SIZE + block_size;
+    let allocate_size = util::bits::min_aligned_size(BLOCK_FREE_SIZE_HEADER_SIZE + block_size, header.page_size);
 
     if header.available_size < allocate_size {
         return Ok(None);
@@ -296,7 +329,7 @@ unsafe fn alloc_block_free_size_by_header<Env: SysMemEnv>(
     Ok(Some(block_ptr.add(BLOCK_FREE_SIZE_HEADER_SIZE)))
 }
 
-unsafe fn free_block_free_size_with_header<Env: SysMemEnv>(
+unsafe fn free_block_free_size_by_header<Env: SysMemEnv>(
     header: &mut Header,
     env: &mut Env,
     p: AnyMutPtr,

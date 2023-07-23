@@ -38,6 +38,7 @@ where
             internal::layout::arena::Config {
                 min_heap_size: config.min_heap_size,
                 max_heap_size: config.max_heap_size,
+                keep_segments_count: (config.min_heap_size / internal::layout::segment::SEGMENT_SIZE) + 12,
             },
         )?;
 
