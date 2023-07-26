@@ -2,12 +2,12 @@ use std::error::Error;
 use std::result::Result;
 
 use crate::internal;
-use crate::sys::ptr::AnyMutPtr;
+use crate::sys::ptr::AnyNonNullPtr;
 use crate::sys::SysMemEnv;
 
 pub trait Allocator {
-    unsafe fn alloc(&mut self, size: usize) -> Result<AnyMutPtr, Box<dyn Error>>;
-    unsafe fn free(&mut self, p: AnyMutPtr) -> Result<(), Box<dyn Error>>;
+    unsafe fn alloc(&mut self, size: usize) -> Result<AnyNonNullPtr, Box<dyn Error>>;
+    unsafe fn free(&mut self, p: AnyNonNullPtr) -> Result<(), Box<dyn Error>>;
 }
 
 pub struct Config {
@@ -38,7 +38,9 @@ where
             internal::layout::arena::Config {
                 min_heap_size: config.min_heap_size,
                 max_heap_size: config.max_heap_size,
-                keep_segments_count: (config.min_heap_size / internal::layout::segment::SEGMENT_SIZE) + 12,
+                keep_segments_count: (config.min_heap_size
+                    / internal::layout::segment::SEGMENT_SIZE)
+                    + 12,
             },
         )?;
 
@@ -50,11 +52,11 @@ impl<Env> Allocator for SampleAllocWithEnv<Env>
 where
     Env: SysMemEnv,
 {
-    unsafe fn alloc(&mut self, size: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
+    unsafe fn alloc(&mut self, size: usize) -> Result<AnyNonNullPtr, Box<dyn Error>> {
         self.internal.alloc_with_env(&mut self.env, size)
     }
 
-    unsafe fn free(&mut self, p: AnyMutPtr) -> Result<(), Box<dyn Error>> {
+    unsafe fn free(&mut self, p: AnyNonNullPtr) -> Result<(), Box<dyn Error>> {
         self.internal.free_with_env(&mut self.env, p)
     }
 }

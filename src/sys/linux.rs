@@ -2,9 +2,10 @@ extern crate libc;
 
 use std::error::Error;
 use std::io;
+use std::ptr::NonNull;
 use std::result::Result;
 
-use crate::sys::ptr::AnyMutPtr;
+use crate::sys::ptr::AnyNonNullPtr;
 
 pub unsafe fn get_pagesize() -> Result<usize, Box<dyn Error>> {
     let v = libc::sysconf(libc::_SC_PAGE_SIZE);
@@ -15,7 +16,7 @@ pub unsafe fn get_pagesize() -> Result<usize, Box<dyn Error>> {
     }
 }
 
-pub unsafe fn reserve(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
+pub unsafe fn reserve(len: usize) -> Result<AnyNonNullPtr, Box<dyn Error>> {
     let p = libc::mmap(
         std::ptr::null_mut(),
         len,
@@ -27,7 +28,7 @@ pub unsafe fn reserve(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
     if p == libc::MAP_FAILED {
         Err(Box::new(io::Error::last_os_error()))
     } else {
-        Ok(AnyMutPtr::new(p))
+        Ok(AnyNonNullPtr::new(NonNull::new_unchecked(p)))
     }
 }
 
@@ -38,13 +39,13 @@ pub enum CommitStrategy {
 }
 
 pub unsafe fn commit(
-    addr: AnyMutPtr,
+    mut addr: AnyNonNullPtr,
     len: usize,
     prefer_strategy: CommitStrategy,
 ) -> Result<CommitStrategy, Box<dyn Error>> {
     if prefer_strategy <= CommitStrategy::MprotectRw {
         // mprotect was added in Linux 4.9.
-        let r = libc::mprotect(addr.to_raw(), len, libc::PROT_READ | libc::PROT_WRITE);
+        let r = libc::mprotect(addr.as_mut_ptr(), len, libc::PROT_READ | libc::PROT_WRITE);
         if r == 0 {
             return Ok(CommitStrategy::MprotectRw);
         }
@@ -53,7 +54,7 @@ pub unsafe fn commit(
     // Remapping FIXED region is an unrecommended strategy.
     // Use as a fallback if we cannot use mprotect.
     let p = libc::mmap(
-        addr.to_raw(),
+        addr.as_mut_ptr(),
         len,
         libc::PROT_READ | libc::PROT_WRITE,
         libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
@@ -67,10 +68,10 @@ pub unsafe fn commit(
     }
 }
 
-pub unsafe fn force_commit(addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>> {
+pub unsafe fn force_commit(mut addr: AnyNonNullPtr, len: usize) -> Result<(), Box<dyn Error>> {
     // Remapping FIXED region is an unrecommended strategy.
     let p = libc::mmap(
-        addr.to_raw(),
+        addr.as_mut_ptr(),
         len,
         libc::PROT_READ | libc::PROT_WRITE,
         libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
@@ -92,13 +93,13 @@ pub enum SoftDecommitStrategy {
 }
 
 pub unsafe fn soft_decommit(
-    addr: AnyMutPtr,
+    mut addr: AnyNonNullPtr,
     len: usize,
     prefer_strategy: SoftDecommitStrategy,
 ) -> Result<SoftDecommitStrategy, Box<dyn Error>> {
     if prefer_strategy <= SoftDecommitStrategy::MadviseFree {
         // MADV_FREE was added in Linux 4.5.
-        let r = libc::madvise(addr.to_raw(), len, libc::MADV_FREE);
+        let r = libc::madvise(addr.as_mut_ptr(), len, libc::MADV_FREE);
         if r == 0 {
             return Ok(SoftDecommitStrategy::MadviseFree);
         }
@@ -106,7 +107,7 @@ pub unsafe fn soft_decommit(
 
     if prefer_strategy <= SoftDecommitStrategy::MadviseDontNeed {
         // Since Linux 3.18, support for madvise is optional.
-        let r = libc::madvise(addr.to_raw(), len, libc::MADV_DONTNEED);
+        let r = libc::madvise(addr.as_mut_ptr(), len, libc::MADV_DONTNEED);
         if r == 0 {
             return Ok(SoftDecommitStrategy::MadviseDontNeed);
         }
@@ -116,7 +117,7 @@ pub unsafe fn soft_decommit(
     // Use as a fallback if we cannot use madvise.
     // Remapping unmaps old mappings.
     let p = libc::mmap(
-        addr.to_raw(),
+        addr.as_mut_ptr(),
         len,
         libc::PROT_READ | libc::PROT_WRITE,
         libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
@@ -137,13 +138,13 @@ pub enum HardDecommitStrategy {
 }
 
 pub unsafe fn hard_decommit(
-    addr: AnyMutPtr,
+    mut addr: AnyNonNullPtr,
     len: usize,
     prefer_strategy: HardDecommitStrategy,
 ) -> Result<HardDecommitStrategy, Box<dyn Error>> {
     if prefer_strategy <= HardDecommitStrategy::MprotectNone {
         // mprotect was added in Linux 4.9.
-        let r = libc::mprotect(addr.to_raw(), len, libc::PROT_NONE);
+        let r = libc::mprotect(addr.as_mut_ptr(), len, libc::PROT_NONE);
         if r == 0 {
             return Ok(HardDecommitStrategy::MprotectNone);
         }
@@ -152,7 +153,7 @@ pub unsafe fn hard_decommit(
     // Remapping FIXED region is an unrecommended strategy.
     // Use as a fallback if we cannot use madvise.
     let p = libc::mmap(
-        addr.to_raw(),
+        addr.as_mut_ptr(),
         len,
         libc::PROT_NONE,
         libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
@@ -166,7 +167,7 @@ pub unsafe fn hard_decommit(
     }
 }
 
-pub unsafe fn alloc(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
+pub unsafe fn alloc(len: usize) -> Result<AnyNonNullPtr, Box<dyn Error>> {
     let p = libc::mmap(
         std::ptr::null_mut(),
         len,
@@ -178,12 +179,12 @@ pub unsafe fn alloc(len: usize) -> Result<AnyMutPtr, Box<dyn Error>> {
     if p == libc::MAP_FAILED {
         Err(Box::new(io::Error::last_os_error()))
     } else {
-        Ok(AnyMutPtr::new(p))
+        Ok(AnyNonNullPtr::new(NonNull::new_unchecked(p)))
     }
 }
 
-pub unsafe fn release(addr: AnyMutPtr, len: usize) -> Result<(), Box<dyn Error>> {
-    let p = libc::munmap(addr.to_raw(), len);
+pub unsafe fn release(mut addr: AnyNonNullPtr, len: usize) -> Result<(), Box<dyn Error>> {
+    let p = libc::munmap(addr.as_mut_ptr(), len);
     if p != 0 {
         Err(Box::new(io::Error::last_os_error()))
     } else {

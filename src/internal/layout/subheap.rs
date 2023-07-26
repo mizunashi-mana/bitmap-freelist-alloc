@@ -1,22 +1,27 @@
-use std::mem::size_of;
+use std::ptr::NonNull;
 
-use crate::internal::layout::segment;
 use crate::internal::layout::constants::ALIGNMENT_SIZE;
+use crate::internal::layout::segment;
 use crate::util;
 
-pub const SUBHEAP_SIZE: usize = size_of::<SubHeap>();
 pub const CLASS_COUNT: usize = 32;
 
 #[derive(Debug)]
 pub struct SubHeap {
-    free_segments_list: *mut segment::Header,
+    pub free_segments_begin: *mut segment::CompactHeader,
+    pub free_segments_end: *mut segment::CompactHeader,
 }
 
 impl SubHeap {
     pub fn init() -> Self {
         Self {
-            free_segments_list: std::ptr::null_mut(),
+            free_segments_begin: std::ptr::null_mut(),
+            free_segments_end: std::ptr::null_mut(),
         }
+    }
+
+    pub fn next_free_segment(&self) -> Option<NonNull<segment::CompactHeader>> {
+        NonNull::new(self.free_segments_begin)
     }
 }
 
@@ -26,7 +31,6 @@ pub const SUBHEAP_SIZE_OF_CLASS: [usize; CLASS_COUNT] = [
     0x0002 * ALIGNMENT_SIZE,
     0x0003 * ALIGNMENT_SIZE,
     0x0004 * ALIGNMENT_SIZE,
-
     // 4-9
     0x0006 * ALIGNMENT_SIZE,
     0x0008 * ALIGNMENT_SIZE,
@@ -34,7 +38,6 @@ pub const SUBHEAP_SIZE_OF_CLASS: [usize; CLASS_COUNT] = [
     0x000c * ALIGNMENT_SIZE,
     0x000e * ALIGNMENT_SIZE,
     0x0010 * ALIGNMENT_SIZE,
-
     // 10-24
     0x0020 * ALIGNMENT_SIZE,
     0x0030 * ALIGNMENT_SIZE,
@@ -51,7 +54,6 @@ pub const SUBHEAP_SIZE_OF_CLASS: [usize; CLASS_COUNT] = [
     0x00e0 * ALIGNMENT_SIZE,
     0x00f0 * ALIGNMENT_SIZE,
     0x0100 * ALIGNMENT_SIZE,
-
     // 25-31
     0x0200 * ALIGNMENT_SIZE,
     0x0300 * ALIGNMENT_SIZE,

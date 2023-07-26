@@ -20,13 +20,13 @@ fn main() {
 unsafe fn main_try() -> Result<(), Box<dyn Error>> {
     let mut manager = allocator::init(sys::new_env(), ALLOC_CONFIG)?;
     println!("manager info: {:?}", manager);
-    let ptr = manager.alloc(1 << 18)?;
+    let mut ptr = manager.alloc(1 << 18)?;
 
-    let item: *mut usize = ptr.to_raw();
+    let item: &mut usize = ptr.as_mut();
     *item = 0;
     println!("{:?}", *item);
 
-    *item = ptr.to_raw_addr();
+    *item = ptr.as_addr();
     println!("{:?}", *item);
 
     *item = 10;
