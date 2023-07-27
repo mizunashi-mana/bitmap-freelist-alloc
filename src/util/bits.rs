@@ -3,6 +3,7 @@ pub const fn is_aligned(value: usize, alignment_size: usize) -> bool {
     value % alignment_size == 0
 }
 
+#[allow(unused)]
 #[inline]
 pub const fn is_power_of_2(value: usize) -> bool {
     value > 0 && (value & (value - 1)) == 0

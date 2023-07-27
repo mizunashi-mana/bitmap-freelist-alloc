@@ -12,6 +12,11 @@ pub struct Segment {
     pub raw_additional_header: NonNull<AdditionalHeader>,
 }
 
+const COMPACT_HEADER_ALL_FLAG_BITS: usize = COMPACT_HEADER_FLAG_BIT_COMMITTED;
+const COMPACT_HEADER_FLAG_BIT_COMMITTED: usize = 0b1;
+
+const COMPACT_HEADER_SP_BIT_SOFT_DECOMMITTED: usize = 0b1;
+
 impl Segment {
     pub unsafe fn init_single_committed(&mut self, block_size: usize) {
         *self.raw_compact_header.as_mut() = CompactHeader {
@@ -100,30 +105,26 @@ pub struct CompactHeader {
 impl CompactHeader {
     #[inline]
     pub fn next(&self) -> *mut Self {
-        (self.raw_next_addr_with_flags & !0b11) as *mut Self
+        (self.raw_next_addr_with_flags & !COMPACT_HEADER_ALL_FLAG_BITS) as *mut Self
     }
 
     #[inline]
     pub fn set_next(&mut self, ptr: *mut Self) {
         let addr = ptr as usize;
-        assert!(addr & 0b11 == 0);
+        assert!(addr & COMPACT_HEADER_ALL_FLAG_BITS == 0);
 
-        let flags = self.raw_next_addr_with_flags & 0b11;
+        let flags = self.raw_next_addr_with_flags & COMPACT_HEADER_ALL_FLAG_BITS;
         self.raw_next_addr_with_flags = addr + flags;
     }
 
-    #[allow(unused)]
     #[inline]
     pub fn is_committed(&self) -> bool {
-        self.raw_next_addr_with_flags & 0b1 == 0b1
+        self.raw_next_addr_with_flags & COMPACT_HEADER_FLAG_BIT_COMMITTED == COMPACT_HEADER_FLAG_BIT_COMMITTED
     }
 
-    pub fn set_committed(&mut self, committed: bool) {
-        if committed {
-            self.raw_next_addr_with_flags = self.raw_next_addr_with_flags | 0b1;
-        } else {
-            self.raw_next_addr_with_flags = self.raw_next_addr_with_flags & !0b1;
-        }
+    pub fn is_soft_decommitted(&self) -> bool {
+        !self.is_committed()
+            && self.bitmap & COMPACT_HEADER_SP_BIT_SOFT_DECOMMITTED == COMPACT_HEADER_SP_BIT_SOFT_DECOMMITTED
     }
 }
 

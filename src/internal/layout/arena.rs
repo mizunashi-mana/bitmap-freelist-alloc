@@ -97,7 +97,7 @@ impl Arena {
     }
 
     #[inline]
-    pub unsafe fn insert_free_segment<Env: SysMemEnv>(
+    pub unsafe fn free_unused_segment<Env: SysMemEnv>(
         &mut self,
         env: &mut Env,
         single_seg: &segment::Segment,
@@ -109,8 +109,11 @@ impl Arena {
     }
 
     #[inline]
-    pub unsafe fn pop_free_segment(&mut self) -> Option<segment::Segment> {
-        pop_free_segment_by_header(self.header_mut())
+    pub unsafe fn pop_free_segment<Env: SysMemEnv>(
+        &mut self,
+        env: &mut Env,
+    ) -> Result<Option<segment::Segment>, Box<dyn Error>> {
+        pop_free_segment_by_header(self.header_mut(), env)
     }
 
     #[inline]
@@ -277,12 +280,30 @@ unsafe fn free_block_free_size_by_header<Env: SysMemEnv>(
     Ok(())
 }
 
-unsafe fn pop_free_segment_by_header(header: &mut Header) -> Option<segment::Segment> {
+unsafe fn pop_free_segment_by_header<Env: SysMemEnv>(
+    header: &mut Header,
+    env: &mut Env,
+) -> Result<Option<segment::Segment>, Box<dyn Error>> {
     match NonNull::new(header.free_segments_begin) {
-        None => None,
-        Some(free_seg_header) => {
-            header.free_segments_begin = free_seg_header.as_ref().next();
-            todo!()
+        None => Ok(None),
+        Some(free_seg_header_ptr) => {
+            header.free_segments_begin = free_seg_header_ptr.as_ref().next();
+            assert!(!free_seg_header_ptr.as_ref().is_committed());
+
+            let segment_index = AnyNonNullPtr::new(free_seg_header_ptr)
+                .offset_bytes_from(header.segment_compact_header_space);
+            let segment_ptr = header.segment_space_begin.add((segment_index as usize) * segment::SEGMENT_SIZE);
+
+            if free_seg_header_ptr.as_ref().is_soft_decommitted() {
+                env.force_commit(segment_ptr, segment::SEGMENT_SIZE)?;
+            } else {
+                env.commit(segment_ptr, segment::SEGMENT_SIZE)?;
+            }
+
+            Ok(Some(segment::Segment {
+                raw_compact_header: free_seg_header_ptr,
+                raw_additional_header: segment_ptr.as_nonnull(),
+            }))
         }
     }
 }

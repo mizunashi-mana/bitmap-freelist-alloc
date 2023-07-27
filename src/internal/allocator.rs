@@ -55,7 +55,7 @@ impl SampleAlloc {
                 let cls = seg.subheap_class();
                 if seg.free_block_and_check_empty(block_index) {
                     self.arena.remove_segment_from_subheap(cls, seg);
-                    self.arena.insert_free_segment(env, seg)?;
+                    self.arena.free_unused_segment(env, seg)?;
                 } else if seg.is_floated() {
                     self.arena.insert_free_segment_to_subheap(cls, seg);
                 }
@@ -81,7 +81,7 @@ unsafe fn alloc_on_subheap_with_env<Env: SysMemEnv>(
         }
         None => {
             let block_size = subheap::SUBHEAP_SIZE_OF_CLASS[class_of_size];
-            match manager.arena.pop_free_segment() {
+            match manager.arena.pop_free_segment(env)? {
                 Some(mut free_seg) => {
                     segment::Segment::init_single_committed(&mut free_seg, block_size);
                     manager
