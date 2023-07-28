@@ -259,14 +259,36 @@ unsafe fn free_unused_segment_by_header<Env: SysMemEnv>(
     env: &mut Env,
     floated_seg: &mut segment::Segment,
 ) -> Result<(), Box<dyn Error>> {
-    let _ = match header
+    let seg = match header
         .keep_segments
         .insert_and_return_flooded(&mut header.segment_space, floated_seg)
     {
         None => return Ok(()),
         Some(flooded_seg) => flooded_seg,
     };
-    todo!()
+
+    if header.segment_space.is_last_segment(seg) {
+        todo!()
+    }
+
+    env.soft_decommit(seg.seg_ptr(), segment::SEGMENT_SIZE)?;
+    let mut seg_compact_header = seg.compact_header;
+    match NonNull::new(header.free_segments_begin) {
+        None => {
+            seg_compact_header.as_mut().next = std::ptr::null_mut();
+            header.free_segments_begin = seg_compact_header.as_ptr();
+        }
+        Some(mut free_segments_begin_ptr) => {
+            if seg_compact_header.as_ptr() < header.free_segments_begin {
+                seg_compact_header.as_mut().next = header.free_segments_begin;
+                header.free_segments_begin = seg_compact_header.as_ptr();
+            } else {
+                seg_compact_header.as_mut().next = free_segments_begin_ptr.as_mut().next;
+                free_segments_begin_ptr.as_mut().next = seg_compact_header.as_ptr();
+            }
+        }
+    }
+    Ok(())
 }
 
 unsafe fn pop_free_segment_by_header<Env: SysMemEnv>(
@@ -309,14 +331,13 @@ unsafe fn insert_free_segment_to_subheap_by_header(
 ) {
     let segment_space = &mut header.segment_space;
     let subheap_cls = &mut header.subheaps[class_of_size];
+    let seg_ptr = floated_seg.compact_header.as_ptr();
     match NonNull::new(subheap_cls.free_segments_begin) {
         None => {
-            let seg_ptr = floated_seg.compact_header_ptr();
             subheap_cls.free_segments_begin = seg_ptr;
             subheap_cls.free_segments_end = seg_ptr;
         }
         Some(free_segments_begin_ptr) => {
-            let seg_ptr = floated_seg.compact_header_ptr();
             let mut free_segments_begin = segment_space.segment(free_segments_begin_ptr);
             if seg_ptr < free_segments_begin_ptr.as_ptr() {
                 floated_seg.append(&mut free_segments_begin);
@@ -336,23 +357,19 @@ unsafe fn remove_segment_from_subheap_by_header(
     class_of_size: usize,
     seg: &mut segment::Segment,
 ) {
-    macro_rules! subheap_cls {
-        () => {
-            header.subheaps[class_of_size]
-        };
-    }
+    let subheap_cls = &mut header.subheaps[class_of_size];
 
-    assert!(!subheap_cls!().free_segments_begin.is_null());
-    assert!(!subheap_cls!().free_segments_end.is_null());
+    assert!(!subheap_cls.free_segments_begin.is_null());
+    assert!(!subheap_cls.free_segments_end.is_null());
 
     let segment_space = &mut header.segment_space;
-    let seg_ptr = seg.compact_header_ptr();
+    let seg_ptr = seg.compact_header.as_ptr();
 
-    if seg_ptr == subheap_cls!().free_segments_begin {
-        subheap_cls!().free_segments_begin = seg.next();
+    if seg_ptr == subheap_cls.free_segments_begin {
+        subheap_cls.free_segments_begin = seg.next();
     }
-    if seg_ptr == subheap_cls!().free_segments_end {
-        subheap_cls!().free_segments_end = seg.prev();
+    if seg_ptr == subheap_cls.free_segments_end {
+        subheap_cls.free_segments_end = seg.prev();
     }
 
     match NonNull::new(seg.next()) {

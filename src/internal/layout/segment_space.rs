@@ -51,15 +51,19 @@ impl SegmentSpace {
             / segment::COMPACT_HEADER_SIZE;
         assert!(seg_index < self.next_alloc_segment_index);
 
-        let raw_additional_header: NonNull<segment::AdditionalHeader> = self
+        let raw_additional_header = self
             .segment_space_begin
-            .add(seg_index * segment::SEGMENT_SIZE)
-            .as_nonnull();
+            .add(seg_index * segment::SEGMENT_SIZE);
 
-        segment::Segment {
-            raw_compact_header: seg_ptr,
-            raw_additional_header,
-        }
+        segment::Segment::new(seg_ptr, raw_additional_header)
+    }
+
+    pub unsafe fn is_last_segment(&self, seg: segment::Segment) -> bool {
+        let seg_index = (seg.seg_ptr().offset_bytes_from(self.segment_space_begin) as usize)
+            / segment::SEGMENT_SIZE;
+        assert!(seg_index < self.next_alloc_segment_index);
+
+        seg_index == self.next_alloc_segment_index - 1
     }
 
     pub unsafe fn alloc_new_segment<Env: SysMemEnv>(
@@ -88,10 +92,10 @@ impl SegmentSpace {
 
         self.next_alloc_segment_index += 1;
 
-        Ok(Some(segment::Segment {
-            raw_compact_header: new_segment_compact_header_space_begin.as_nonnull(),
-            raw_additional_header: new_segment_space_begin.as_nonnull(),
-        }))
+        Ok(Some(segment::Segment::new(
+            new_segment_compact_header_space_begin.as_nonnull(),
+            new_segment_space_begin,
+        )))
     }
 
     unsafe fn alloc_new_segment_compact_headers<Env: SysMemEnv>(
