@@ -8,10 +8,13 @@ use std::result::Result;
 use crate::internal::layout::block;
 use crate::internal::layout::constants::ALIGNMENT_SIZE;
 use crate::internal::layout::segment;
+use crate::internal::layout::segment_space;
 use crate::internal::layout::subheap;
 use crate::sys::ptr::AnyNonNullPtr;
 use crate::sys::SysMemEnv;
 use crate::util;
+
+mod keep_segments_list;
 
 pub struct Config {
     pub min_heap_size: usize,
@@ -35,16 +38,8 @@ impl fmt::Debug for Arena {
 
 #[derive(Debug)]
 pub struct Header {
-    // immutable
-    page_size: usize,
-    segment_compact_header_space: AnyNonNullPtr,
-    segment_space_begin: AnyNonNullPtr,
-    segment_space_end: AnyNonNullPtr,
-
-    // mutable
-    available_size: usize,
-    committed_segment_compact_header_count: usize,
-    committed_segment_count: usize,
+    segment_space: segment_space::SegmentSpace,
+    keep_segments: keep_segments_list::KeepSegmentsList,
     free_segments_begin: *mut segment::CompactHeader,
     subheaps: [subheap::SubHeap; subheap::CLASS_COUNT],
 }
@@ -79,17 +74,12 @@ impl Arena {
 
     #[inline]
     pub unsafe fn segment(&mut self, seg_ptr: NonNull<segment::CompactHeader>) -> segment::Segment {
-        segment_by_header(self.header_mut(), seg_ptr)
+        self.header_mut().segment_space.segment(seg_ptr)
     }
 
     #[inline]
     pub unsafe fn block_type(&mut self, ptr: AnyNonNullPtr) -> block::Type {
-        let header = self.header();
-
-        if {
-            ptr.offset_bytes_from(header.segment_space_begin) >= 0
-                && header.segment_space_end.offset_bytes_from(ptr) > 0
-        } {
+        if self.header().segment_space.ptr_in_space(ptr) {
             block::Type::OnSubHeap
         } else {
             block::Type::FreeSize
@@ -100,12 +90,11 @@ impl Arena {
     pub unsafe fn free_unused_segment<Env: SysMemEnv>(
         &mut self,
         env: &mut Env,
-        single_seg: &segment::Segment,
+        floated_seg: &mut segment::Segment,
     ) -> Result<(), Box<dyn Error>> {
-        assert!(single_seg.prev().is_null());
-        assert!(single_seg.next().is_null());
+        assert!(floated_seg.is_floated());
 
-        todo!()
+        free_unused_segment_by_header(self.header_mut(), env, floated_seg)
     }
 
     #[inline]
@@ -120,16 +109,19 @@ impl Arena {
     pub unsafe fn insert_free_segment_to_subheap(
         &mut self,
         class_of_size: usize,
-        single_seg: &mut segment::Segment,
+        floated_seg: &mut segment::Segment,
     ) {
-        assert!(single_seg.prev().is_null());
-        assert!(single_seg.next().is_null());
+        assert!(floated_seg.is_floated());
 
-        insert_free_segment_to_subheap_by_header(self.header_mut(), class_of_size, single_seg)
+        insert_free_segment_to_subheap_by_header(self.header_mut(), class_of_size, floated_seg)
     }
 
     #[inline]
-    pub unsafe fn remove_segment_from_subheap(&mut self, class_of_size: usize, seg: &mut segment::Segment) {
+    pub unsafe fn remove_segment_from_subheap(
+        &mut self,
+        class_of_size: usize,
+        seg: &mut segment::Segment,
+    ) {
         remove_segment_from_subheap_by_header(self.header_mut(), class_of_size, seg)
     }
 
@@ -155,7 +147,7 @@ impl Arena {
         &mut self,
         env: &mut Env,
     ) -> Result<Option<segment::Segment>, Box<dyn Error>> {
-        alloc_new_segment_by_header(self.header_mut(), env)
+        self.header_mut().segment_space.alloc_new_segment(env)
     }
 }
 
@@ -204,16 +196,16 @@ unsafe fn init_arena<Env: SysMemEnv>(
     let segment_space_begin = segment_space;
     let segment_space_end = segment_space_begin.add(segment_space_size);
     *context_space.as_mut() = Header {
-        // immutable
-        page_size,
-        segment_compact_header_space,
-        segment_space_begin,
-        segment_space_end,
-
-        // mutable
-        available_size: init_available_size,
-        committed_segment_compact_header_count,
-        committed_segment_count: 0,
+        segment_space: segment_space::SegmentSpace::new(
+            page_size,
+            segment_compact_header_space,
+            segment_space_begin,
+            segment_space_end,
+            init_available_size,
+            committed_segment_compact_header_count,
+            0,
+        ),
+        keep_segments: keep_segments_list::KeepSegmentsList::new(config.keep_segments_count),
         free_segments_begin: std::ptr::null_mut(),
         subheaps: array::from_fn(|_| subheap::SubHeap::init()),
     };
@@ -223,41 +215,23 @@ unsafe fn init_arena<Env: SysMemEnv>(
     todo!()
 }
 
-unsafe fn segment_by_header(
-    header: &mut Header,
-    seg_ptr: NonNull<segment::CompactHeader>,
-) -> segment::Segment {
-    let raw_seg_ptr = AnyNonNullPtr::new(seg_ptr);
-    let seg_index = (raw_seg_ptr.offset_bytes_from(header.segment_compact_header_space) as usize)
-        / segment::COMPACT_HEADER_SIZE;
-    assert!(seg_index < header.committed_segment_compact_header_count);
-
-    let raw_additional_header: NonNull<segment::AdditionalHeader> = header
-        .segment_space_begin
-        .add(seg_index * segment::SEGMENT_SIZE)
-        .as_nonnull();
-
-    segment::Segment {
-        raw_compact_header: seg_ptr,
-        raw_additional_header,
-    }
-}
-
 const BLOCK_FREE_SIZE_HEADER_SIZE: usize = size_of::<block::HeaderForFreeSize>();
 unsafe fn alloc_block_free_size_by_header<Env: SysMemEnv>(
     header: &mut Header,
     env: &mut Env,
     block_size: usize,
 ) -> Result<Option<AnyNonNullPtr>, Box<dyn Error>> {
-    let allocate_size =
-        util::bits::min_aligned_size(BLOCK_FREE_SIZE_HEADER_SIZE + block_size, header.page_size);
+    let allocate_size = util::bits::min_aligned_size(
+        BLOCK_FREE_SIZE_HEADER_SIZE + block_size,
+        header.segment_space.page_size,
+    );
 
-    if header.available_size < allocate_size {
+    if header.segment_space.available_size < allocate_size {
         return Ok(None);
     }
 
     let block_ptr = env.alloc(allocate_size)?;
-    header.available_size -= allocate_size;
+    header.segment_space.available_size -= allocate_size;
     block::HeaderForFreeSize::init(block_ptr.as_nonnull(), block_size);
 
     Ok(Some(block_ptr.add(BLOCK_FREE_SIZE_HEADER_SIZE)))
@@ -275,120 +249,83 @@ unsafe fn free_block_free_size_by_header<Env: SysMemEnv>(
     };
 
     env.release(block_ptr, block_whole_size)?;
-    header.available_size += block_whole_size;
+    header.segment_space.available_size += block_whole_size;
 
     Ok(())
+}
+
+unsafe fn free_unused_segment_by_header<Env: SysMemEnv>(
+    header: &mut Header,
+    env: &mut Env,
+    floated_seg: &mut segment::Segment,
+) -> Result<(), Box<dyn Error>> {
+    let _ = match header
+        .keep_segments
+        .insert_and_return_flooded(&mut header.segment_space, floated_seg)
+    {
+        None => return Ok(()),
+        Some(flooded_seg) => flooded_seg,
+    };
+    todo!()
 }
 
 unsafe fn pop_free_segment_by_header<Env: SysMemEnv>(
     header: &mut Header,
     env: &mut Env,
 ) -> Result<Option<segment::Segment>, Box<dyn Error>> {
-    match NonNull::new(header.free_segments_begin) {
-        None => Ok(None),
+    let segment_space = &mut header.segment_space;
+    match header.keep_segments.pop(segment_space) {
+        None => {
+            // continue
+        }
         Some(free_seg_header_ptr) => {
-            header.free_segments_begin = free_seg_header_ptr.as_ref().next();
-            assert!(!free_seg_header_ptr.as_ref().is_committed());
-
-            let segment_index = AnyNonNullPtr::new(free_seg_header_ptr)
-                .offset_bytes_from(header.segment_compact_header_space);
-            let segment_ptr = header.segment_space_begin.add((segment_index as usize) * segment::SEGMENT_SIZE);
-
-            if free_seg_header_ptr.as_ref().is_soft_decommitted() {
-                env.force_commit(segment_ptr, segment::SEGMENT_SIZE)?;
-            } else {
-                env.commit(segment_ptr, segment::SEGMENT_SIZE)?;
-            }
-
-            Ok(Some(segment::Segment {
-                raw_compact_header: free_seg_header_ptr,
-                raw_additional_header: segment_ptr.as_nonnull(),
-            }))
-        }
-    }
-}
-
-unsafe fn alloc_new_segment_by_header<Env: SysMemEnv>(
-    header: &mut Header,
-    env: &mut Env,
-) -> Result<Option<segment::Segment>, Box<dyn Error>> {
-    if header.committed_segment_compact_header_count == header.committed_segment_count {
-        if !allow_new_segment_compact_headers_by_header(header, env)? {
-            return Ok(None);
+            return Ok(Some(segment_space.segment(free_seg_header_ptr)));
         }
     }
 
-    if header.available_size < segment::SEGMENT_SIZE {
-        return Ok(None);
+    match NonNull::new(header.free_segments_begin) {
+        None => {
+            // continue
+        }
+        Some(free_seg_header_ptr) => {
+            let seg_compact_header = free_seg_header_ptr.as_ref();
+
+            header.free_segments_begin = seg_compact_header.next;
+
+            let segment = header.segment_space.segment(free_seg_header_ptr);
+            env.force_commit(segment.seg_ptr(), segment::SEGMENT_SIZE)?;
+
+            return Ok(Some(segment));
+        }
     }
 
-    let committed_segment_count = header.committed_segment_count;
-    let new_segment_compact_header_space_begin = header
-        .segment_compact_header_space
-        .add(committed_segment_count * segment::COMPACT_HEADER_SIZE);
-    let new_segment_space_begin = header
-        .segment_space_begin
-        .add(committed_segment_count * segment::SEGMENT_SIZE);
-    env.commit(new_segment_space_begin, segment::SEGMENT_SIZE)?;
-    header.available_size -= segment::SEGMENT_SIZE;
-
-    header.committed_segment_count += 1;
-
-    Ok(Some(segment::Segment {
-        raw_compact_header: new_segment_compact_header_space_begin.as_nonnull(),
-        raw_additional_header: new_segment_space_begin.as_nonnull(),
-    }))
-}
-
-unsafe fn allow_new_segment_compact_headers_by_header<Env: SysMemEnv>(
-    header: &mut Header,
-    env: &mut Env,
-) -> Result<bool, Box<dyn Error>> {
-    if header.available_size < header.page_size {
-        return Ok(false);
-    }
-
-    let new_segment_compact_header_space_begin = header
-        .segment_compact_header_space
-        .add(header.committed_segment_compact_header_count * segment::COMPACT_HEADER_SIZE);
-    let new_segment_compact_headers_count = header.page_size / segment::COMPACT_HEADER_SIZE;
-    env.commit(new_segment_compact_header_space_begin, header.page_size)?;
-    header.available_size -= header.page_size;
-
-    header.committed_segment_compact_header_count += new_segment_compact_headers_count;
-
-    Ok(true)
+    Ok(None)
 }
 
 unsafe fn insert_free_segment_to_subheap_by_header(
     header: &mut Header,
     class_of_size: usize,
-    single_seg: &mut segment::Segment,
+    floated_seg: &mut segment::Segment,
 ) {
-    macro_rules! subheap_cls {
-        () => {
-            header.subheaps[class_of_size]
-        };
-    }
-
-    match NonNull::new(subheap_cls!().free_segments_begin) {
+    let segment_space = &mut header.segment_space;
+    let subheap_cls = &mut header.subheaps[class_of_size];
+    match NonNull::new(subheap_cls.free_segments_begin) {
         None => {
-            let seg_ptr = single_seg.pointer_to_seg();
-            subheap_cls!().free_segments_begin = seg_ptr;
-            subheap_cls!().free_segments_end = seg_ptr;
+            let seg_ptr = floated_seg.compact_header_ptr();
+            subheap_cls.free_segments_begin = seg_ptr;
+            subheap_cls.free_segments_end = seg_ptr;
         }
         Some(free_segments_begin_ptr) => {
-            let seg_ptr = single_seg.pointer_to_seg();
-            let mut free_segments_begin = segment_by_header(header, free_segments_begin_ptr);
+            let seg_ptr = floated_seg.compact_header_ptr();
+            let mut free_segments_begin = segment_space.segment(free_segments_begin_ptr);
             if seg_ptr < free_segments_begin_ptr.as_ptr() {
-                single_seg.append(&mut free_segments_begin);
-                subheap_cls!().free_segments_begin = seg_ptr;
+                floated_seg.append(&mut free_segments_begin);
+                subheap_cls.free_segments_begin = seg_ptr;
             } else {
-                let free_segments_end_ptr =
-                    NonNull::new_unchecked(subheap_cls!().free_segments_end);
-                let mut free_segments_end = segment_by_header(header, free_segments_end_ptr);
-                free_segments_end.append(single_seg);
-                subheap_cls!().free_segments_end = seg_ptr;
+                let free_segments_end_ptr = NonNull::new_unchecked(subheap_cls.free_segments_end);
+                let mut free_segments_end = segment_space.segment(free_segments_end_ptr);
+                free_segments_end.append(floated_seg);
+                subheap_cls.free_segments_end = seg_ptr;
             }
         }
     }
@@ -408,7 +345,8 @@ unsafe fn remove_segment_from_subheap_by_header(
     assert!(!subheap_cls!().free_segments_begin.is_null());
     assert!(!subheap_cls!().free_segments_end.is_null());
 
-    let seg_ptr = seg.pointer_to_seg();
+    let segment_space = &mut header.segment_space;
+    let seg_ptr = seg.compact_header_ptr();
 
     if seg_ptr == subheap_cls!().free_segments_begin {
         subheap_cls!().free_segments_begin = seg.next();
@@ -419,7 +357,7 @@ unsafe fn remove_segment_from_subheap_by_header(
 
     match NonNull::new(seg.next()) {
         Some(seg_next_ptr) => {
-            let mut seg_next = segment_by_header(header, seg_next_ptr);
+            let mut seg_next = segment_space.segment(seg_next_ptr);
             seg_next.set_prev(seg.prev());
         }
         None => {
@@ -428,7 +366,7 @@ unsafe fn remove_segment_from_subheap_by_header(
     }
     match NonNull::new(seg.prev()) {
         Some(seg_prev_ptr) => {
-            let mut seg_prev = segment_by_header(header, seg_prev_ptr);
+            let mut seg_prev = segment_space.segment(seg_prev_ptr);
             seg_prev.set_next(seg.next());
         }
         None => {

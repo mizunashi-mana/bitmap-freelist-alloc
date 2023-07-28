@@ -83,7 +83,7 @@ unsafe fn alloc_on_subheap_with_env<Env: SysMemEnv>(
             let block_size = subheap::SUBHEAP_SIZE_OF_CLASS[class_of_size];
             match manager.arena.pop_free_segment(env)? {
                 Some(mut free_seg) => {
-                    segment::Segment::init_single_committed(&mut free_seg, block_size);
+                    segment::Segment::init_single(&mut free_seg, block_size);
                     manager
                         .arena
                         .insert_free_segment_to_subheap(class_of_size, &mut free_seg);
@@ -94,7 +94,7 @@ unsafe fn alloc_on_subheap_with_env<Env: SysMemEnv>(
                         Some(free_seg) => free_seg,
                         None => Err(manager.heap_overflow())?,
                     };
-                    segment::Segment::init_single_committed(&mut free_seg, block_size);
+                    segment::Segment::init_single(&mut free_seg, block_size);
                     manager
                         .arena
                         .insert_free_segment_to_subheap(class_of_size, &mut free_seg);
@@ -104,7 +104,9 @@ unsafe fn alloc_on_subheap_with_env<Env: SysMemEnv>(
         }
     };
     if seg.mark_block_and_check_full(block_index) {
-        manager.arena.remove_segment_from_subheap(class_of_size, &mut seg);
+        manager
+            .arena
+            .remove_segment_from_subheap(class_of_size, &mut seg);
     }
     Ok(seg.block_ptr(block_index))
 }

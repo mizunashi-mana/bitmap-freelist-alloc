@@ -12,16 +12,11 @@ pub struct Segment {
     pub raw_additional_header: NonNull<AdditionalHeader>,
 }
 
-const COMPACT_HEADER_ALL_FLAG_BITS: usize = COMPACT_HEADER_FLAG_BIT_COMMITTED;
-const COMPACT_HEADER_FLAG_BIT_COMMITTED: usize = 0b1;
-
-const COMPACT_HEADER_SP_BIT_SOFT_DECOMMITTED: usize = 0b1;
-
 impl Segment {
-    pub unsafe fn init_single_committed(&mut self, block_size: usize) {
+    pub unsafe fn init_single(&mut self, block_size: usize) {
         *self.raw_compact_header.as_mut() = CompactHeader {
+            next: std::ptr::null_mut(),
             bitmap: 0,
-            raw_next_addr_with_flags: 0b1,
         };
         *self.raw_additional_header.as_mut() = AdditionalHeader {
             prev: std::ptr::null_mut(),
@@ -35,8 +30,13 @@ impl Segment {
     }
 
     #[inline]
-    pub fn pointer_to_seg(&self) -> *mut CompactHeader {
+    pub fn compact_header_ptr(&self) -> *mut CompactHeader {
         self.raw_compact_header.as_ptr()
+    }
+
+    #[inline]
+    pub fn seg_ptr(&self) -> AnyNonNullPtr {
+        AnyNonNullPtr::new(self.raw_additional_header)
     }
 
     #[inline]
@@ -46,12 +46,12 @@ impl Segment {
 
     #[inline]
     pub unsafe fn next(&self) -> *mut CompactHeader {
-        self.raw_compact_header.as_ref().next()
+        self.raw_compact_header.as_ref().next
     }
 
     #[inline]
     pub unsafe fn set_next(&mut self, ptr: *mut CompactHeader) {
-        self.raw_compact_header.as_mut().set_next(ptr)
+        self.raw_compact_header.as_mut().next = ptr;
     }
 
     #[inline]
@@ -71,6 +71,7 @@ impl Segment {
     #[inline]
     pub unsafe fn is_floated(&self) -> bool {
         self.raw_additional_header.as_ref().prev.is_null()
+            && self.raw_compact_header.as_ref().next.is_null()
     }
 
     pub fn find_free_block(&mut self) -> Option<usize> {
@@ -90,42 +91,14 @@ impl Segment {
         assert!(self.next().is_null());
         assert!(after.prev().is_null());
 
-        self.raw_compact_header
-            .as_mut()
-            .set_next(after.pointer_to_seg());
-        after.raw_additional_header.as_mut().prev = self.pointer_to_seg();
+        self.raw_compact_header.as_mut().next = after.compact_header_ptr();
+        after.raw_additional_header.as_mut().prev = self.compact_header_ptr();
     }
 }
 
 pub struct CompactHeader {
+    pub next: *mut CompactHeader,
     pub bitmap: usize,
-    pub raw_next_addr_with_flags: usize,
-}
-
-impl CompactHeader {
-    #[inline]
-    pub fn next(&self) -> *mut Self {
-        (self.raw_next_addr_with_flags & !COMPACT_HEADER_ALL_FLAG_BITS) as *mut Self
-    }
-
-    #[inline]
-    pub fn set_next(&mut self, ptr: *mut Self) {
-        let addr = ptr as usize;
-        assert!(addr & COMPACT_HEADER_ALL_FLAG_BITS == 0);
-
-        let flags = self.raw_next_addr_with_flags & COMPACT_HEADER_ALL_FLAG_BITS;
-        self.raw_next_addr_with_flags = addr + flags;
-    }
-
-    #[inline]
-    pub fn is_committed(&self) -> bool {
-        self.raw_next_addr_with_flags & COMPACT_HEADER_FLAG_BIT_COMMITTED == COMPACT_HEADER_FLAG_BIT_COMMITTED
-    }
-
-    pub fn is_soft_decommitted(&self) -> bool {
-        !self.is_committed()
-            && self.bitmap & COMPACT_HEADER_SP_BIT_SOFT_DECOMMITTED == COMPACT_HEADER_SP_BIT_SOFT_DECOMMITTED
-    }
 }
 
 pub struct AdditionalHeader {
