@@ -1,6 +1,6 @@
-# sample-alloc
+# BitMap Free List Allocator
 
-Allocator sample by Rust for my study.
+An allocator sample by Rust for my study.
 
 ## License
 

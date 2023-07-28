@@ -51,13 +51,13 @@ impl SampleAlloc {
         match self.arena.block_type(ptr) {
             block::Type::FreeSize => self.arena.free_block_of_free_size(env, ptr),
             block::Type::OnSubHeap => {
-                let (seg, block_index) = segment::Segment::from_block_ptr(ptr);
+                let (mut seg, block_index) = self.arena.segment_with_block_index(ptr);
                 let cls = seg.subheap_class();
                 if seg.free_block_and_check_empty(block_index) {
-                    self.arena.remove_segment_from_subheap(cls, seg);
-                    self.arena.free_unused_segment(env, seg)?;
+                    self.arena.remove_segment_from_subheap(cls, &mut seg);
+                    self.arena.free_unused_segment(env, &mut seg)?;
                 } else if seg.is_floated() {
-                    self.arena.insert_free_segment_to_subheap(cls, seg);
+                    self.arena.insert_free_segment_to_subheap(cls, &mut seg);
                 }
                 Ok(())
             }

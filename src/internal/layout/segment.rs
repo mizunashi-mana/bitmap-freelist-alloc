@@ -1,7 +1,10 @@
 use std::mem::size_of;
 use std::ptr::NonNull;
 
+use crate::internal::layout::segment;
+use crate::internal::layout::segment_space;
 use crate::sys::ptr::AnyNonNullPtr;
+use crate::util;
 
 pub const SEGMENT_SIZE: usize = 1 << 16;
 pub const COMPACT_HEADER_SIZE: usize = size_of::<CompactHeader>();
@@ -32,7 +35,11 @@ impl Segment {
         todo!("initialize sub-bitmaps and blocks")
     }
 
-    pub fn from_block_ptr<'a>(ptr: AnyNonNullPtr) -> (&'a mut Self, usize) {
+    pub fn from_block_ptr<'a>(
+        seg_space: &mut segment_space::SegmentSpace,
+        ptr: AnyNonNullPtr,
+    ) -> (Self, usize) {
+        let _ = util::bits::max_aligned_size(ptr.as_addr(), segment::SEGMENT_SIZE);
         todo!()
     }
 

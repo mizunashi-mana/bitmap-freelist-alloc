@@ -78,6 +78,14 @@ impl Arena {
     }
 
     #[inline]
+    pub unsafe fn segment_with_block_index(
+        &mut self,
+        block_ptr_on_subheap: AnyNonNullPtr,
+    ) -> (segment::Segment, usize) {
+        segment::Segment::from_block_ptr(&mut self.header_mut().segment_space, block_ptr_on_subheap)
+    }
+
+    #[inline]
     pub unsafe fn block_type(&mut self, ptr: AnyNonNullPtr) -> block::Type {
         if self.header().segment_space.ptr_in_space(ptr) {
             block::Type::OnSubHeap
