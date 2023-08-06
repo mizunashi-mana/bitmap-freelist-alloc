@@ -74,7 +74,7 @@ impl Arena {
 
     #[inline]
     pub unsafe fn segment(&mut self, seg_ptr: NonNull<segment::CompactHeader>) -> segment::Segment {
-        self.header_mut().segment_space.segment(seg_ptr)
+        self.header_mut().segment_space.segment_by_cmp_header(seg_ptr)
     }
 
     #[inline]
@@ -309,7 +309,7 @@ unsafe fn pop_free_segment_by_header<Env: SysMemEnv>(
             // continue
         }
         Some(free_seg_header_ptr) => {
-            return Ok(Some(segment_space.segment(free_seg_header_ptr)));
+            return Ok(Some(segment_space.segment_by_cmp_header(free_seg_header_ptr)));
         }
     }
 
@@ -322,7 +322,7 @@ unsafe fn pop_free_segment_by_header<Env: SysMemEnv>(
 
             header.free_segments_begin = seg_compact_header.next;
 
-            let segment = header.segment_space.segment(free_seg_header_ptr);
+            let segment = header.segment_space.segment_by_cmp_header(free_seg_header_ptr);
             env.force_commit(segment.seg_ptr(), segment::SEGMENT_SIZE)?;
 
             return Ok(Some(segment));
@@ -346,13 +346,13 @@ unsafe fn insert_free_segment_to_subheap_by_header(
             subheap_cls.free_segments_end = seg_ptr;
         }
         Some(free_segments_begin_ptr) => {
-            let mut free_segments_begin = segment_space.segment(free_segments_begin_ptr);
+            let mut free_segments_begin = segment_space.segment_by_cmp_header(free_segments_begin_ptr);
             if seg_ptr < free_segments_begin_ptr.as_ptr() {
                 floated_seg.append(&mut free_segments_begin);
                 subheap_cls.free_segments_begin = seg_ptr;
             } else {
                 let free_segments_end_ptr = NonNull::new_unchecked(subheap_cls.free_segments_end);
-                let mut free_segments_end = segment_space.segment(free_segments_end_ptr);
+                let mut free_segments_end = segment_space.segment_by_cmp_header(free_segments_end_ptr);
                 free_segments_end.append(floated_seg);
                 subheap_cls.free_segments_end = seg_ptr;
             }
@@ -382,7 +382,7 @@ unsafe fn remove_segment_from_subheap_by_header(
 
     match NonNull::new(seg.next()) {
         Some(seg_next_ptr) => {
-            let mut seg_next = segment_space.segment(seg_next_ptr);
+            let mut seg_next = segment_space.segment_by_cmp_header(seg_next_ptr);
             seg_next.set_prev(seg.prev());
         }
         None => {
@@ -391,7 +391,7 @@ unsafe fn remove_segment_from_subheap_by_header(
     }
     match NonNull::new(seg.prev()) {
         Some(seg_prev_ptr) => {
-            let mut seg_prev = segment_space.segment(seg_prev_ptr);
+            let mut seg_prev = segment_space.segment_by_cmp_header(seg_prev_ptr);
             seg_prev.set_next(seg.next());
         }
         None => {

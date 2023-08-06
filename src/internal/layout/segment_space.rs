@@ -45,8 +45,10 @@ impl SegmentSpace {
             && self.segment_space_end.offset_bytes_from(ptr) > 0
     }
 
-    pub unsafe fn segment(&self, seg_ptr: NonNull<segment::CompactHeader>) -> segment::Segment {
+    pub unsafe fn segment_by_cmp_header(&self, seg_ptr: NonNull<segment::CompactHeader>) -> segment::Segment {
         let raw_seg_ptr = AnyNonNullPtr::new(seg_ptr);
+        assert!(self.segment_compact_header_space <= raw_seg_ptr);
+
         let seg_index = (raw_seg_ptr.offset_bytes_from(self.segment_compact_header_space) as usize)
             / segment::COMPACT_HEADER_SIZE;
         assert!(seg_index < self.next_alloc_segment_index);
@@ -56,6 +58,21 @@ impl SegmentSpace {
             .add(seg_index * segment::SEGMENT_SIZE);
 
         segment::Segment::new(seg_ptr, raw_additional_header)
+    }
+
+    pub unsafe fn segment_by_header(&self, seg_ptr: AnyNonNullPtr) -> segment::Segment {
+        assert!(self.segment_space_begin <= seg_ptr);
+
+        let seg_index = (seg_ptr.offset_bytes_from(self.segment_space_begin) as usize)
+            / segment::SEGMENT_SIZE;
+        assert!(seg_index < self.next_alloc_segment_index);
+
+        let raw_compact_header = self
+            .segment_compact_header_space
+            .add(seg_index * segment::COMPACT_HEADER_SIZE)
+            .as_nonnull();
+
+        segment::Segment::new(raw_compact_header, seg_ptr)
     }
 
     pub unsafe fn is_last_segment(&self, seg: segment::Segment) -> bool {

@@ -57,8 +57,8 @@ unsafe fn insert_and_return_flooded(
         Some(begin_ptr) => {
             let end_ptr = NonNull::new_unchecked(keep_segments_list.end);
 
-            let mut begin_seg = segment_space.segment(begin_ptr);
-            let mut end_seg = segment_space.segment(end_ptr);
+            let mut begin_seg = segment_space.segment_by_cmp_header(begin_ptr);
+            let mut end_seg = segment_space.segment_by_cmp_header(end_ptr);
 
             let middle_ptr = NonNull::new_unchecked(
                 begin_ptr
@@ -102,7 +102,7 @@ unsafe fn insert_and_return_flooded(
                 match NonNull::new(begin_seg.next()) {
                     Some(begin_next_ptr) => {
                         segment_space
-                            .segment(begin_next_ptr)
+                            .segment_by_cmp_header(begin_next_ptr)
                             .set_prev(seg_ptr.as_ptr());
                     }
                     None => {
@@ -125,7 +125,7 @@ unsafe fn insert_and_return_flooded(
                 match NonNull::new(end_seg.prev()) {
                     Some(end_prev_ptr) => {
                         segment_space
-                            .segment(end_prev_ptr)
+                            .segment_by_cmp_header(end_prev_ptr)
                             .set_next(seg_ptr.as_ptr());
                     }
                     None => {
@@ -163,12 +163,12 @@ unsafe fn pop(
             let end_ptr = NonNull::new_unchecked(keep_segments_list.end);
 
             if begin_next_ptr <= end_ptr {
-                let mut new_begin = segment_space.segment(begin_next_ptr);
+                let mut new_begin = segment_space.segment_by_cmp_header(begin_next_ptr);
                 keep_segments_list.begin = new_begin.compact_header.as_ptr();
                 new_begin.set_prev(std::ptr::null_mut());
             } else if begin_next_ptr.as_ref().next == end_ptr.as_ptr() {
-                let mut new_begin = segment_space.segment(end_ptr);
-                let mut new_end = segment_space.segment(begin_next_ptr);
+                let mut new_begin = segment_space.segment_by_cmp_header(end_ptr);
+                let mut new_end = segment_space.segment_by_cmp_header(begin_next_ptr);
                 keep_segments_list.begin = new_begin.compact_header.as_ptr();
                 keep_segments_list.end = new_end.compact_header.as_ptr();
                 new_begin.set_prev(std::ptr::null_mut());
@@ -176,8 +176,8 @@ unsafe fn pop(
                 new_end.set_prev(new_begin.compact_header.as_ptr());
                 new_end.set_next(std::ptr::null_mut());
             } else {
-                let mut new_begin = segment_space.segment(end_ptr);
-                let mut new_end = segment_space.segment(begin_next_ptr);
+                let mut new_begin = segment_space.segment_by_cmp_header(end_ptr);
+                let mut new_end = segment_space.segment_by_cmp_header(begin_next_ptr);
                 let new_begin_next = new_end.next();
                 let new_end_prev = new_begin.prev();
                 keep_segments_list.begin = new_begin.compact_header.as_ptr();
@@ -202,7 +202,7 @@ unsafe fn force_pop_end_without_updating_count(
     keep_segments_list: &mut KeepSegmentsList,
     segment_space: &mut segment_space::SegmentSpace,
 ) -> segment::Segment {
-    let mut current_end = segment_space.segment(NonNull::new_unchecked(keep_segments_list.end));
+    let mut current_end = segment_space.segment_by_cmp_header(NonNull::new_unchecked(keep_segments_list.end));
     keep_segments_list.end = current_end.prev();
     NonNull::new_unchecked(current_end.prev()).as_mut().next = std::ptr::null_mut();
 

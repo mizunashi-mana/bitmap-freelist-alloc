@@ -79,29 +79,26 @@ unsafe fn alloc_on_subheap_with_env<Env: SysMemEnv>(
             };
             (seg, block_index)
         }
-        None => {
-            let block_size = subheap::SUBHEAP_SIZE_OF_CLASS[class_of_size];
-            match manager.arena.pop_free_segment(env)? {
-                Some(mut free_seg) => {
-                    segment::Segment::init_single(&mut free_seg, block_size);
-                    manager
-                        .arena
-                        .insert_free_segment_to_subheap(class_of_size, &mut free_seg);
-                    (free_seg, 0)
-                }
-                None => {
-                    let mut free_seg = match manager.arena.alloc_new_segment(env)? {
-                        Some(free_seg) => free_seg,
-                        None => Err(manager.heap_overflow())?,
-                    };
-                    segment::Segment::init_single(&mut free_seg, block_size);
-                    manager
-                        .arena
-                        .insert_free_segment_to_subheap(class_of_size, &mut free_seg);
-                    (free_seg, 0)
-                }
+        None => match manager.arena.pop_free_segment(env)? {
+            Some(mut free_seg) => {
+                segment::Segment::init_single(&mut free_seg, class_of_size);
+                manager
+                    .arena
+                    .insert_free_segment_to_subheap(class_of_size, &mut free_seg);
+                (free_seg, 0)
             }
-        }
+            None => {
+                let mut free_seg = match manager.arena.alloc_new_segment(env)? {
+                    Some(free_seg) => free_seg,
+                    None => Err(manager.heap_overflow())?,
+                };
+                segment::Segment::init_single(&mut free_seg, class_of_size);
+                manager
+                    .arena
+                    .insert_free_segment_to_subheap(class_of_size, &mut free_seg);
+                (free_seg, 0)
+            }
+        },
     };
     if seg.mark_block_and_check_full(block_index) {
         manager

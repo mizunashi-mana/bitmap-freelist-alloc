@@ -1,13 +1,20 @@
 use std::mem::size_of;
 use std::ptr::NonNull;
 
+use crate::internal::layout::constants::BYTE_BIT_SIZE;
 use crate::internal::layout::segment;
 use crate::internal::layout::segment_space;
+use crate::internal::layout::subheap;
 use crate::sys::ptr::AnyNonNullPtr;
 use crate::util;
 
 pub const SEGMENT_SIZE: usize = 1 << 16;
 pub const COMPACT_HEADER_SIZE: usize = size_of::<CompactHeader>();
+const ADDITIONAL_HEADER_SIZE: usize = size_of::<AdditionalHeader>();
+pub const BITMAP_ITEM_SIZE: usize = size_of::<usize>();
+const BITMAP_ITEM_BIT_SIZE: usize = BITMAP_ITEM_SIZE * BYTE_BIT_SIZE;
+const BITMAP_ITEM_SP_BIT_SIZE: usize = 1;
+pub const BITMAP_ITEM_EFF_BIT_SIZE: usize = BITMAP_ITEM_BIT_SIZE - BITMAP_ITEM_SP_BIT_SIZE;
 
 #[derive(Clone, Copy)]
 pub struct Segment {
@@ -16,6 +23,7 @@ pub struct Segment {
 }
 
 impl Segment {
+    #[inline]
     pub fn new(compact_header: NonNull<CompactHeader>, segment: AnyNonNullPtr) -> Self {
         Self {
             compact_header: compact_header,
@@ -23,23 +31,18 @@ impl Segment {
         }
     }
 
-    pub unsafe fn init_single(&mut self, block_size: usize) {
+    pub unsafe fn init_single(&mut self, class_of_size: usize) {
         *self.compact_header.as_mut() = CompactHeader {
             next: std::ptr::null_mut(),
-            bitmap: 0,
+            bitmap: 1,
         };
         *self.additional_header.as_mut() = AdditionalHeader {
             prev: std::ptr::null_mut(),
-            subheap_class: 0,
+            subheap_class: class_of_size,
+            used_block_count: 0,
         };
-        todo!("initialize sub-bitmaps and blocks")
-    }
 
-    pub fn from_block_ptr<'a>(
-        seg_space: &mut segment_space::SegmentSpace,
-        ptr: AnyNonNullPtr,
-    ) -> (Self, usize) {
-        let _ = util::bits::max_aligned_size(ptr.as_addr(), segment::SEGMENT_SIZE);
+        let _ = SUB_BITMAP_SIZE_OF_CLASS[class_of_size];
         todo!()
     }
 
@@ -49,8 +52,25 @@ impl Segment {
     }
 
     #[inline]
+    unsafe fn bitmap_space_begin(&self) -> AnyNonNullPtr {
+        self.seg_ptr().add(ADDITIONAL_HEADER_SIZE)
+    }
+
+    #[inline]
+    unsafe fn block_space_begin(&self) -> AnyNonNullPtr {
+        let sub_bitmap_size = SUB_BITMAP_SIZE_OF_CLASS[self.subheap_class()];
+        self.bitmap_space_begin()
+            .add(SUB_BITMAP_UNIT_SIZE * sub_bitmap_size)
+    }
+
+    #[inline]
     pub unsafe fn subheap_class(&self) -> usize {
         self.additional_header.as_ref().subheap_class
+    }
+
+    #[inline]
+    pub unsafe fn block_size(&self) -> usize {
+        subheap::SUBHEAP_SIZE_OF_CLASS[self.subheap_class()]
     }
 
     #[inline]
@@ -73,8 +93,25 @@ impl Segment {
         self.additional_header.as_mut().prev = ptr;
     }
 
-    pub fn block_ptr(&mut self, index: usize) -> AnyNonNullPtr {
-        todo!()
+    #[inline]
+    pub unsafe fn block_ptr(&mut self, index: usize) -> AnyNonNullPtr {
+        self.block_space_begin().add(self.block_size() * index)
+    }
+
+    #[inline]
+    pub unsafe fn from_block_ptr<'a>(
+        seg_space: &mut segment_space::SegmentSpace,
+        block_ptr: AnyNonNullPtr,
+    ) -> (Self, usize) {
+        let seg_ptr = AnyNonNullPtr::new(NonNull::new_unchecked(util::bits::max_aligned_size(block_ptr.as_addr(), segment::SEGMENT_SIZE) as *mut ()));
+        let seg = seg_space.segment_by_header(seg_ptr);
+
+        let block_space_begin = seg.block_space_begin();
+        assert!(block_space_begin <= block_ptr);
+
+        let block_index = (block_ptr.offset_bytes_from(block_space_begin) as usize) / seg.block_size();
+
+        (seg, block_index)
     }
 
     #[inline]
@@ -113,4 +150,99 @@ pub struct CompactHeader {
 pub struct AdditionalHeader {
     pub prev: *mut CompactHeader,
     pub subheap_class: usize,
+    pub used_block_count: usize,
+}
+
+const SUB_BITMAP_UNIT_SIZE: usize = BITMAP_ITEM_EFF_BIT_SIZE * BITMAP_ITEM_SIZE;
+const SUB_BITMAP_SIZE_OF_CLASS: [usize; subheap::CLASS_COUNT] = [
+    sub_bitmap_size_of_class(0),
+    sub_bitmap_size_of_class(1),
+    sub_bitmap_size_of_class(2),
+    sub_bitmap_size_of_class(3),
+    sub_bitmap_size_of_class(4),
+    sub_bitmap_size_of_class(5),
+    sub_bitmap_size_of_class(6),
+    sub_bitmap_size_of_class(7),
+    sub_bitmap_size_of_class(8),
+    sub_bitmap_size_of_class(9),
+    sub_bitmap_size_of_class(10),
+    sub_bitmap_size_of_class(11),
+    sub_bitmap_size_of_class(12),
+    sub_bitmap_size_of_class(13),
+    sub_bitmap_size_of_class(14),
+    sub_bitmap_size_of_class(15),
+    sub_bitmap_size_of_class(16),
+    sub_bitmap_size_of_class(17),
+    sub_bitmap_size_of_class(18),
+    sub_bitmap_size_of_class(19),
+    sub_bitmap_size_of_class(20),
+    sub_bitmap_size_of_class(21),
+    sub_bitmap_size_of_class(22),
+    sub_bitmap_size_of_class(23),
+    sub_bitmap_size_of_class(24),
+    sub_bitmap_size_of_class(25),
+    sub_bitmap_size_of_class(26),
+    sub_bitmap_size_of_class(27),
+    sub_bitmap_size_of_class(28),
+    sub_bitmap_size_of_class(29),
+    sub_bitmap_size_of_class(30),
+    sub_bitmap_size_of_class(31),
+];
+
+const BLOCK_COUNT_OF_CLASS: [usize; subheap::CLASS_COUNT] = [
+    block_count_of_class(0),
+    block_count_of_class(1),
+    block_count_of_class(2),
+    block_count_of_class(3),
+    block_count_of_class(4),
+    block_count_of_class(5),
+    block_count_of_class(6),
+    block_count_of_class(7),
+    block_count_of_class(8),
+    block_count_of_class(9),
+    block_count_of_class(10),
+    block_count_of_class(11),
+    block_count_of_class(12),
+    block_count_of_class(13),
+    block_count_of_class(14),
+    block_count_of_class(15),
+    block_count_of_class(16),
+    block_count_of_class(17),
+    block_count_of_class(18),
+    block_count_of_class(19),
+    block_count_of_class(20),
+    block_count_of_class(21),
+    block_count_of_class(22),
+    block_count_of_class(23),
+    block_count_of_class(24),
+    block_count_of_class(25),
+    block_count_of_class(26),
+    block_count_of_class(27),
+    block_count_of_class(28),
+    block_count_of_class(29),
+    block_count_of_class(30),
+    block_count_of_class(31),
+];
+
+const fn sub_bitmap_size_of_class(class_of_size: usize) -> usize {
+    let block_size = subheap::SUBHEAP_SIZE_OF_CLASS[class_of_size];
+    let block_space_size = SEGMENT_SIZE - size_of::<AdditionalHeader>();
+
+    if block_space_size <= block_size * BITMAP_ITEM_EFF_BIT_SIZE {
+        0
+    } else {
+        ((block_space_size - 1)
+            / ((block_size * BITMAP_ITEM_EFF_BIT_SIZE + BITMAP_ITEM_SIZE)
+                * BITMAP_ITEM_EFF_BIT_SIZE))
+            + 1
+    }
+}
+
+const fn block_count_of_class(class_of_size: usize) -> usize {
+    let block_size = subheap::SUBHEAP_SIZE_OF_CLASS[class_of_size];
+    let sub_bitmap_size = sub_bitmap_size_of_class(class_of_size);
+    let segment_available_size = SEGMENT_SIZE - ADDITIONAL_HEADER_SIZE;
+    let block_space_size = segment_available_size - SUB_BITMAP_UNIT_SIZE * sub_bitmap_size;
+
+    block_space_size / block_size
 }

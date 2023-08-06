@@ -1,7 +1,7 @@
 use std::ptr::NonNull;
 
 #[repr(transparent)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AnyNonNullPtr {
     raw: NonNull<u8>,
 }
